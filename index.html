@@ -618,7 +618,7 @@
             <span class="close-modal" onclick="closeModal('checkout-modal')">&times;</span>
             
             <div id="checkout-panel-1">
-                <h3> Order Info & Payment Method</h3>
+                <h3>Step 1: Order Info & Payment Method</h3>
                 <p style="margin:10px 0; font-size:15px;">Total Payable: <strong id="modal-total-price-1" style="color:var(--primary);">৳0</strong></p>
                 
                 <label>Customer Name:</label>
@@ -646,7 +646,7 @@
 
             <div id="checkout-panel-2" style="display: none;">
                 <button type="button" class="btn-back" onclick="goToPanel(1)"><i class="fa fa-arrow-left"></i> Back</button>
-                <h3 id="panel-2-title"> Payment Details</h3>
+                <h3 id="panel-2-title">Step 2: Payment Details</h3>
                 <p style="margin:10px 0; font-size:14px; color:gray;">Method Selected: <strong id="selected-method-text" style="color:var(--primary);">bKash</strong></p>
 
                 <div id="mfs-fields">
@@ -668,7 +668,7 @@
 
             <div id="checkout-panel-3" style="display: none;">
                 <button type="button" class="btn-back" onclick="goToPanel(2)"><i class="fa fa-arrow-left"></i> Back</button>
-                <h3> Verification & Confirm</h3>
+                <h3>Step 3: Verification & Confirm</h3>
                 <p style="margin:10px 0; font-size:13px; color:gray;">An OTP code has been sent to your mobile number.</p>
 
                 <label>OTP Code:</label>
@@ -1409,7 +1409,7 @@
             const id = document.getElementById('login-identifier').value.trim().toLowerCase();
             const pass = document.getElementById('login-pass').value.trim();
 
-            if (id === 'admin' && pass === 123456()) {
+            if (id === 'admin' && pass === getAdminPass()) {
                 currentUser = { name: 'Super Admin', role: 'admin', id: 'admin', permissions: ['all'] };
                 saveAndLogin(currentUser);
                 showAdminDashboard();
