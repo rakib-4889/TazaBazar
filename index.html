@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title id="site-title-tag">TazaBazar - Ultimate Superstore</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <style>
         :root {
             --bg-color: #f4f6f8;
@@ -250,29 +251,30 @@
         .whatsapp-float { position: fixed; bottom: 20px; right: 20px; background: #25d366; color: white; width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 28px; box-shadow: 0 4px 10px rgba(0,0,0,0.3); z-index: 999; text-decoration: none; }
         .profile-img-preview { width: 80px; height: 80px; border-radius: 50%; object-fit: cover; border: 2px solid var(--primary); margin: 10px 0; }
         .img-upload-preview { max-height: 100px; object-fit: contain; border-radius: 4px; display: none; margin: 10px 0; border: 1px solid var(--border-color); }
-    
-        .store-manage-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:15px; }
-        .store-panel { background:var(--bg-color); padding:15px; border:1px solid var(--border-color); border-radius:8px; }
-        .store-panel h4 { margin-bottom:12px; color:var(--primary); }
-        .price-preview-box { margin:12px 0; padding:12px; border-radius:6px; background:var(--card-bg); border:1px solid var(--border-color); display:flex; justify-content:space-between; align-items:center; }
-        .price-preview-box strong { font-size:20px; color:var(--primary); }
-        .view-mode-toggle { display:flex; gap:6px; align-items:center; margin-left:auto; }
-        .view-mode-toggle button { border:1px solid var(--border-color); background:var(--card-bg); color:var(--text-color); padding:7px 10px; border-radius:6px; cursor:pointer; }
-        .view-mode-toggle button.active { background:var(--primary); color:#fff; }
-        .table-scroll { overflow-x:auto; }
-        body.mobile-preview #main-content { max-width:430px; margin:0 auto; box-shadow:0 0 0 8px #222; }
-        body.mobile-preview .product-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
-        body.mobile-preview #admin-view { max-width:430px; margin:0 auto; }
-        @media(max-width:700px){ .store-manage-grid { grid-template-columns:1fr; } .view-mode-toggle { margin-left:0; } }
-
     </style>
-</head>
+
+<!-- SUPABASE SETUP (run once in Supabase SQL Editor):
+create table if not exists public.tb_store (key text primary key, value jsonb not null, updated_at timestamptz default now());
+alter table public.tb_store enable row level security;
+create policy "tb_store_public_read" on public.tb_store for select to anon using (true);
+create policy "tb_store_public_insert" on public.tb_store for insert to anon with check (true);
+create policy "tb_store_public_update" on public.tb_store for update to anon using (true) with check (true);
+create policy "tb_store_public_delete" on public.tb_store for delete to anon using (true);
+
+create policy "product_images_public_read" on storage.objects for select to anon using (bucket_id = 'product-images');
+create policy "product_images_public_insert" on storage.objects for insert to anon with check (bucket_id = 'product-images');
+
+Then create a PUBLIC bucket named: product-images
+For production, replace these permissive anon policies with authenticated admin policies. Never put a service_role/secret key in this HTML.
+-->
+    </head>
 <body>
 
     <div class="top-banner">
         <span id="display-top-announcement">🚚 Express Grocery Delivery in Dhaka!</span>
         <button class="btn-header" onclick="toggleDarkMode()"><i class="fa fa-moon"></i> Dark / Light</button>
     </div>
+    <div id="cloud-status" style="font-size:11px;text-align:center;padding:4px;background:#ecfdf5;color:#065f46;display:none;">☁️ Shared online store enabled</div>
 
     <header>
         <a class="logo" onclick="showHome()" id="header-logo-container">
@@ -328,10 +330,6 @@
             <div id="admin-view">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 20px;">
                     <h2>Portal (<span id="role-title">Admin</span>)</h2>
-                    <div class="view-mode-toggle">
-                        <button type="button" id="desktop-view-btn" class="active" onclick="setViewMode('desktop')"><i class="fa fa-desktop"></i> Desktop</button>
-                        <button type="button" id="mobile-view-btn" onclick="setViewMode('mobile')"><i class="fa fa-mobile-alt"></i> Mobile</button>
-                    </div>
                     <button class="btn-header" style="background:var(--primary);" onclick="showHome()"><i class="fa fa-store"></i> Storefront</button>
                 </div>
 
@@ -381,57 +379,27 @@
                 <div id="sec-manage-products" class="admin-section">
                     <h3>All Products List</h3>
                     <table class="admin-table">
-                        <thead><tr><th>Image</th><th>Title</th><th>Category</th><th>Price</th><th>Action</th></tr></thead>
+                        <thead><tr><th>Image</th><th>Title</th><th>Category</th><th>Price</th><th>Stock</th><th>Action</th></tr></thead>
                         <tbody id="admin-product-list"></tbody>
                     </table>
                 </div>
 
-                <div id="sec-store-management" class="admin-section">
-                    <h3>🏪 Store Management</h3>
-                    <p style="color:gray; margin:6px 0 15px;">Manage product photo, title, stock quantity, price and discount from one place.</p>
-                    <div class="store-manage-grid">
-                        <div class="store-panel">
-                            <h4>📦 Product & Inventory</h4>
-                            <form onsubmit="handleItemUpload(event)">
-                                <label>Product Title:</label>
-                                <input type="text" id="p-title" class="form-control" required>
-                                <label>Category:</label>
-                                <select id="p-category" class="form-control" required></select>
-                                <label>Product Quantity / Stock:</label>
-                                <input type="number" id="p-quantity" class="form-control" min="0" step="1" value="0" required>
-                                <label>Product Image:</label>
-                                <input type="file" id="p-image-file" accept="image/*" class="form-control" onchange="previewProductImage(event)" required>
-                                <img id="p-img-preview" class="img-upload-preview" alt="Preview">
-                                <button type="submit" id="product-save-btn" class="btn-buy-now" style="background:var(--primary);">➕ Add Product to Store</button>
-                                <button type="button" id="product-cancel-edit" class="btn-buy-now" style="background:#777;display:none;" onclick="cancelProductEdit()">Cancel Edit</button>
-                            </form>
+                <div id="sec-upload-product" class="admin-section">
+                    <h3>🏪 Store Management — Add Product</h3>
+                    <p style="font-size:12px;color:#64748b;margin:6px 0 12px">Product data and images are shared online through Supabase.</p>
+                    <form onsubmit="handleItemUpload(event)">
+                        <label>Title:</label><input type="text" id="p-title" class="form-control" required>
+                        <label>Category:</label><select id="p-category" class="form-control" required></select>
+                        <div style="display: flex; gap: 10px;">
+                            <div style="flex:1;"><label>Regular Price (TK):</label><input type="number" id="p-price" class="form-control" required></div>
+                            <div style="flex:1;"><label>Discount (%):</label><input type="number" id="p-discount" class="form-control" min="0" max="99"></div>
+                            <div style="flex:1;"><label>Quantity / Stock:</label><input type="number" id="p-quantity" class="form-control" min="0" value="0" required></div>
                         </div>
-                        <div class="store-panel">
-                            <h4>💰 Price & Discount</h4>
-                            <form onsubmit="handlePriceDiscountOnly(event)">
-                                <label>Select Product:</label>
-                                <select id="pd-product" class="form-control" required onchange="loadPriceDiscountPanel()"></select>
-                                <label>Regular Price (BDT):</label>
-                                <input type="number" id="pd-price" class="form-control" min="0" step="0.01" required>
-                                <label>Discount (%):</label>
-                                <input type="number" id="pd-discount" class="form-control" min="0" max="99" step="0.01" value="0" required>
-                                <div class="price-preview-box">
-                                    <span>Final Selling Price</span>
-                                    <strong id="pd-final-price">৳0</strong>
-                                </div>
-                                <button type="submit" class="btn-buy-now" style="background:#f57c00;">💾 Save Price & Discount</button>
-                            </form>
-                        </div>
-                    </div>
-                    <div class="store-panel" style="margin-top:15px;">
-                        <h4>📊 Current Store Inventory</h4>
-                        <div class="table-scroll">
-                        <table class="admin-table">
-                            <thead><tr><th>Image</th><th>Title</th><th>Category</th><th>Quantity</th><th>Regular Price</th><th>Discount</th><th>Final Price</th><th>Action</th></tr></thead>
-                            <tbody id="store-inventory-list"></tbody>
-                        </table>
-                        </div>
-                    </div>
+                        <label>Upload Product Image:</label>
+                        <input type="file" id="p-image-file" accept="image/*" class="form-control" onchange="previewProductImage(event)" required>
+                        <img id="p-img-preview" class="img-upload-preview" alt="Preview">
+                        <button type="submit" class="btn-buy-now">Publish Product</button>
+                    </form>
                 </div>
 
                 <div id="sec-payment-methods" class="admin-section">
@@ -611,9 +579,7 @@
                     <input type="text" id="reg-name" placeholder="Full Name" required>
                 </div>
                 
-                <div class="phone-input-container">
-                    <input type="tel" id="reg-phone" class="form-control" style="margin:0; width:100%;" placeholder="017XXXXXXXX" required>
-                </div>
+                <input type="tel" id="reg-phone" class="form-control" style="margin:0;" placeholder="11-digit mobile number" required>
 
                 <div class="input-group-icon">
                     <i class="fa fa-lock"></i>
@@ -632,9 +598,7 @@
                     <input type="text" id="reset-name" placeholder="Full Name (Account Name)" required>
                 </div>
 
-                <div class="phone-input-container">
-                    <input type="tel" id="reset-phone" class="form-control" style="margin:0; width:100%;" placeholder="017XXXXXXXX" required>
-                </div>
+                <input type="tel" id="reset-phone" class="form-control" style="margin:0;" placeholder="Registered Mobile Number" required>
 
                 <div class="input-group-icon">
                     <i class="fa fa-key"></i>
@@ -661,10 +625,8 @@
                 <label>Customer Name:</label>
                 <input type="text" id="cust-name" class="form-control" required>
                 
-                <label>Phone Number (01XXXXXXXXX):</label>
-                <div class="phone-input-container">
-                    <input type="tel" id="cust-phone" class="form-control" style="margin:0; width:100%;" placeholder="017XXXXXXXX" required>
-                </div>
+                <label>Phone Number:</label>
+                <input type="tel" id="cust-phone" class="form-control" style="margin:0;" placeholder="017XXXXXXXX" required>
                 
                 <label>Delivery Address:</label>
                 <textarea id="cust-address" class="form-control" required></textarea>
@@ -681,7 +643,7 @@
                 <p style="margin:10px 0; font-size:14px; color:gray;">Method Selected: <strong id="selected-method-text" style="color:var(--primary);">bKash</strong></p>
 
                 <div id="mfs-fields">
-                    <label id="mfs-label">Mobile Wallet Account Number (01XXXXXXXXX):</label>
+                    <label id="mfs-label">Mobile Wallet Account Number:</label>
                     <input type="tel" id="mfs-account-number" class="form-control" placeholder="01XXXXXXXXX">
                 </div>
 
@@ -730,23 +692,59 @@
     <a href="https://wa.me/8801700000000" id="whatsapp-link" class="whatsapp-float" target="_blank"><i class="fab fa-whatsapp"></i></a>
 
     <script>
+        /*
+         * TazaBazar shared-data setup
+         * 1) Create a Supabase project.
+         * 2) Run the SQL shown in the instructions below in Supabase SQL Editor.
+         * 3) Paste your Project URL and Publishable/Anon key below.
+         * Never put a Supabase service_role/secret key in this file.
+         */
+        const SUPABASE_URL = 'PASTE_YOUR_SUPABASE_PROJECT_URL_HERE';
+        const SUPABASE_KEY = 'PASTE_YOUR_SUPABASE_PUBLISHABLE_OR_ANON_KEY_HERE';
+        const CLOUD_ENABLED = /^https:\/\/.*\.supabase\.co$/.test(SUPABASE_URL) && SUPABASE_KEY.startsWith('ey');
+        const sb = CLOUD_ENABLED ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;
+        const _lsSet = localStorage.setItem.bind(localStorage);
+        const _lsGet = localStorage.getItem.bind(localStorage);
+        const _lsRemove = localStorage.removeItem.bind(localStorage);
+        const CLOUD_SKIP_KEYS = new Set(['tb_user','tb_admin_pass']);
+        let cloudReady = false;
+
+        async function cloudSave(key, value) {
+            if (!sb || !cloudReady || CLOUD_SKIP_KEYS.has(key)) return;
+            try {
+                await sb.from('tb_store').upsert({ key, value: JSON.parse(value), updated_at: new Date().toISOString() }, { onConflict: 'key' });
+            } catch (e) { console.warn('Cloud save failed:', key, e); }
+        }
+        async function cloudLoadAll() {
+            if (!sb) return;
+            const { data, error } = await sb.from('tb_store').select('key,value');
+            if (error) { console.warn('Cloud load failed:', error); return; }
+            (data || []).forEach(row => {
+                if (!CLOUD_SKIP_KEYS.has(row.key)) _lsSet(row.key, JSON.stringify(row.value));
+            });
+        }
+        async function cloudDelete(key) {
+            if (!sb || !cloudReady || CLOUD_SKIP_KEYS.has(key)) return;
+            try { await sb.from('tb_store').delete().eq('key', key); } catch (e) { console.warn('Cloud delete failed:', e); }
+        }
+        if (CLOUD_ENABLED) {
+            localStorage.setItem = function(key, value) { _lsSet(key, value); cloudSave(key, value); };
+            localStorage.removeItem = function(key) { _lsRemove(key); cloudDelete(key); };
+        }
+
         let cart = [];
         let currentUser = null;
         let tempLogoBase64 = "";
         let tempProductImageBase64 = "";
         let tempPMLogoBase64 = "";
         let selectedPaymentMethod = "Cash on Delivery";
-        let pendingOtp = null;
-        let editingProductId = null;
 
-        const ADMIN_DEFAULT_PASSWORD = 'Taza@Admin#2026';
-        const ADMIN_DEFAULT_HASH = 'f094b72a4c90734524fe25141b3803d18070c51adf504f87ab4cf95e0222a95d';
-        const ADMIN_CREDENTIAL_KEY = 'tb_admin_pass_hash_v3';
         const defaultCategories = ['Fresh Veggies', 'Fish & Meat', 'Milk & Dairy'];
         const defaultProducts = [
-            { id: 1, title: 'Fresh Deshi Rui Fish Cleaned - 1 KG', category: 'Fish & Meat', price: 420, discount: 10, quantity: 20, image: 'https://via.placeholder.com/200?text=Rui+Fish' },
-            { id: 2, title: 'Beef Meat Premium - 1 KG', category: 'Fish & Meat', price: 750, discount: 0, quantity: 15, image: 'https://via.placeholder.com/200?text=Beef' }
+            { id: 1, title: 'Fresh Deshi Rui Fish Cleaned - 1 KG', category: 'Fish & Meat', price: 420, discount: 10, image: 'https://via.placeholder.com/200?text=Rui+Fish' },
+            { id: 2, title: 'Beef Meat Premium - 1 KG', category: 'Fish & Meat', price: 750, discount: 0, image: 'https://via.placeholder.com/200?text=Beef' }
         ];
+
         const defaultPaymentMethods = [
             { id: 1, name: 'Cash on Delivery', logo: '' },
             { id: 2, name: 'bKash', logo: '' },
@@ -754,141 +752,583 @@
             { id: 4, name: 'Rocket', logo: '' }
         ];
 
-        function safeJSON(key, fallback) { try { const v=JSON.parse(localStorage.getItem(key)); return v ?? fallback; } catch(e){ return fallback; } }
-        function getCategories() { return safeJSON('tb_cats', defaultCategories); }
-        function getProducts() { return safeJSON('tb_prods', defaultProducts).map(p=>({quantity:0,...p})); }
-        function getCustomers() { return safeJSON('tb_registered_customers', []); }
-        function getEmployees() { return safeJSON('tb_employees', []); }
-        function getOrders() { return safeJSON('tb_orders', []); }
-        function getExpenses() { return safeJSON('tb_expenses', []); }
-        function getPaymentMethods() { return safeJSON('tb_payment_methods', defaultPaymentMethods); }
-        function getAuditLogs() { return safeJSON('tb_audit_logs', []); }
-        function finalPrice(p) { const price=Number(p.price)||0, d=Math.min(99,Math.max(0,Number(p.discount)||0)); return Math.round(price-(price*d/100)*100)/100; }
-        function money(n) { return '৳'+(Number(n)||0).toLocaleString('en-BD',{maximumFractionDigits:2}); }
-        function esc(v){ return String(v??'').replace(/[&<>'"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[m])); }
+        function getCategories() { return JSON.parse(localStorage.getItem('tb_cats')) || defaultCategories; }
+        function getProducts() { const p = JSON.parse(_lsGet('tb_prods')) || defaultProducts; return p.map(x => ({...x, quantity: Number.isFinite(Number(x.quantity)) ? Number(x.quantity) : 0})); }
+        function getCustomers() { return JSON.parse(localStorage.getItem('tb_registered_customers')) || []; }
+        function getEmployees() { return JSON.parse(localStorage.getItem('tb_employees')) || []; }
+        function getOrders() { return JSON.parse(localStorage.getItem('tb_orders')) || []; }
+        function getExpenses() { return JSON.parse(localStorage.getItem('tb_expenses')) || []; }
+        function getAdminPass() { return localStorage.getItem('tb_admin_pass') || '123456'; }
+        function getPaymentMethods() { return JSON.parse(localStorage.getItem('tb_payment_methods')) || defaultPaymentMethods; }
+        function getAuditLogs() { return JSON.parse(localStorage.getItem('tb_audit_logs')) || []; }
 
-        function sha256(text) {
-            if (window.crypto && crypto.subtle) return crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)).then(b=>Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,'0')).join(''));
-            return Promise.resolve(simpleHash(text));
+        function logAuditAction(actionType, targetId, details) {
+            let logs = getAuditLogs();
+            const logEntry = {
+                timestamp: new Date().toLocaleString(),
+                user: currentUser ? `${currentUser.name} (${currentUser.role})` : 'System',
+                actionType: actionType,
+                targetId: targetId,
+                details: details
+            };
+            logs.unshift(logEntry);
+            localStorage.setItem('tb_audit_logs', JSON.stringify(logs));
         }
-        function simpleHash(str){ let h1=0x811c9dc5,h2=0x01000193; for(let i=0;i<str.length;i++){h1^=str.charCodeAt(i);h1=Math.imul(h1,16777619);h2^=str.charCodeAt(i);h2=Math.imul(h2,2246822519);} return (h1>>>0).toString(16).padStart(8,'0')+(h2>>>0).toString(16).padStart(8,'0').repeat(4); }
-        async function ensureAdminCredential(){
-            // Use a new versioned key so an old/broken localStorage credential cannot block the new default login.
-            const current=localStorage.getItem(ADMIN_CREDENTIAL_KEY);
-            if(!current){
-                localStorage.setItem(ADMIN_CREDENTIAL_KEY,ADMIN_DEFAULT_HASH);
+
+        async function initApp() {
+            if (CLOUD_ENABLED) {
+                await cloudLoadAll();
+                cloudReady = true;
+            }
+            loadSiteSettingsUI();
+            renderCategorySidebar();
+            renderProducts(getProducts());
+            checkAuthState();
+            updateDashboardStats();
+            renderPaymentMethodsGrid();
+            if (!CLOUD_ENABLED) console.warn('Supabase is not configured. Data will remain browser-local until you add the project URL/key.'); else { const el=document.getElementById('cloud-status'); if(el) el.style.display='block'; }
+        }
+
+        function toggleDarkMode() { document.body.classList.toggle('dark-mode'); }
+
+        function loadSiteSettingsUI() {
+            const settings = JSON.parse(localStorage.getItem('tb_site_settings')) || {
+                companyName: 'TazaBazar',
+                logoImg: '',
+                address: 'House #45, Road #10, Dhanmondi, Dhaka',
+                phone: '+880 1700-000000',
+                email: 'support@tazabazar.com',
+                about: 'TazaBazar is your ultimate online grocery store in Dhaka, Bangladesh.',
+                copyright: '© 2026 TazaBazar Superstore. All Rights Reserved.'
+            };
+
+            document.getElementById('display-company-name').innerText = settings.companyName;
+            document.getElementById('site-title-tag').innerText = settings.companyName + ' - Superstore';
+            document.getElementById('auth-title-text').innerText = settings.companyName;
+
+            if (settings.logoImg) {
+                document.getElementById('header-logo-container').innerHTML = `<img src="${settings.logoImg}" alt="Logo"> <span>${settings.companyName}</span>`;
+                document.getElementById('modal-dynamic-logo').innerHTML = `<img src="${settings.logoImg}" alt="Logo">`;
+            }
+
+            document.getElementById('footer-about-title').innerText = 'About ' + settings.companyName;
+            document.getElementById('footer-about-text').innerText = settings.about;
+            document.getElementById('footer-address').innerText = settings.address;
+            document.getElementById('footer-phone').innerText = settings.phone;
+            document.getElementById('footer-email').innerText = settings.email;
+            document.getElementById('footer-copyright').innerText = settings.copyright;
+            document.getElementById('whatsapp-link').href = "https://wa.me/" + settings.phone.replace(/[^0-9]/g, '');
+
+            document.getElementById('setting-company-name').value = settings.companyName;
+            document.getElementById('setting-address').value = settings.address;
+            document.getElementById('setting-phone').value = settings.phone;
+            document.getElementById('setting-email').value = settings.email;
+            document.getElementById('setting-about').value = settings.about;
+            document.getElementById('setting-copyright').value = settings.copyright;
+        }
+
+        function previewLogoFile(event) {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    tempLogoBase64 = e.target.result;
+                    document.getElementById('logo-preview-img').src = tempLogoBase64;
+                    document.getElementById('logo-preview-img').style.display = 'block';
+                };
+                reader.readAsDataURL(file);
             }
         }
-        async function adminPasswordMatches(pass){
-            await ensureAdminCredential();
-            const saved=localStorage.getItem(ADMIN_CREDENTIAL_KEY);
-            // Guaranteed first-login path for the published default credential.
-            if(saved===ADMIN_DEFAULT_HASH && pass===ADMIN_DEFAULT_PASSWORD) return true;
-            if(window.crypto && crypto.subtle) return (await sha256(pass))===saved;
-            return false;
+
+        function previewProductImage(event) {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    tempProductImageBase64 = e.target.result;
+                    const preview = document.getElementById('p-img-preview');
+                    preview.src = tempProductImageBase64;
+                    preview.style.display = 'block';
+                };
+                reader.readAsDataURL(file);
+            }
         }
-        function logAuditAction(actionType,targetId,details){ const logs=getAuditLogs(); logs.unshift({timestamp:new Date().toLocaleString(),user:currentUser?`${currentUser.name} (${currentUser.role})`:'System',actionType,targetId,details}); localStorage.setItem('tb_audit_logs',JSON.stringify(logs.slice(0,500))); }
 
-        async function initApp(){
-            await ensureAdminCredential();
-            migrateData(); loadSiteSettingsUI(); renderCategorySidebar(); renderProducts(getProducts()); checkAuthState(); updateDashboardStats(); renderPaymentMethodsGrid();
-            updatePricePreview();
+        function previewPMLogo(event) {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    tempPMLogoBase64 = e.target.result;
+                    const preview = document.getElementById('pm-logo-preview');
+                    preview.src = tempPMLogoBase64;
+                    preview.style.display = 'block';
+                };
+                reader.readAsDataURL(file);
+            }
         }
-        function migrateData(){
-            if(!localStorage.getItem('tb_prods')) localStorage.setItem('tb_prods',JSON.stringify(defaultProducts));
-            const products=getProducts(); localStorage.setItem('tb_prods',JSON.stringify(products));
-            const customers=getCustomers(); customers.forEach(c=>{if(c.phone) c.phone=normalizePhone(c.phone);}); localStorage.setItem('tb_registered_customers',JSON.stringify(customers));
+
+        function handleSaveSiteSettings(e) {
+            e.preventDefault();
+            let current = JSON.parse(localStorage.getItem('tb_site_settings')) || {};
+
+            const updatedSettings = {
+                companyName: document.getElementById('setting-company-name').value || 'TazaBazar',
+                logoImg: tempLogoBase64 || current.logoImg || '',
+                address: document.getElementById('setting-address').value,
+                phone: document.getElementById('setting-phone').value,
+                email: document.getElementById('setting-email').value,
+                about: document.getElementById('setting-about').value,
+                copyright: document.getElementById('setting-copyright').value
+            };
+
+            localStorage.setItem('tb_site_settings', JSON.stringify(updatedSettings));
+            logAuditAction('EDIT', 'Site Settings', 'Updated website settings and branding information');
+            alert('✅ Site Settings updated successfully!');
+            location.reload();
         }
-        function toggleDarkMode(){ document.body.classList.toggle('dark-mode'); localStorage.setItem('tb_dark',document.body.classList.contains('dark-mode')?'1':'0'); }
-        function setViewMode(mode){ document.body.classList.toggle('mobile-preview',mode==='mobile'); document.getElementById('desktop-view-btn')?.classList.toggle('active',mode==='desktop'); document.getElementById('mobile-view-btn')?.classList.toggle('active',mode==='mobile'); localStorage.setItem('tb_view_mode',mode); }
 
-        function loadSiteSettingsUI(){
-            const settings=safeJSON('tb_site_settings',{companyName:'TazaBazar',logoImg:'',address:'House #45, Road #10, Dhanmondi, Dhaka',phone:'01700-000000',email:'support@tazabazar.com',about:'TazaBazar is your ultimate online grocery store in Dhaka, Bangladesh.',copyright:'© 2026 TazaBazar Superstore. All Rights Reserved.'});
-            document.getElementById('display-company-name').innerText=settings.companyName; document.getElementById('site-title-tag').innerText=settings.companyName+' - Superstore'; document.getElementById('auth-title-text').innerText=settings.companyName;
-            if(settings.logoImg){document.getElementById('header-logo-container').innerHTML=`<img src="${settings.logoImg}" alt="Logo"> <span>${esc(settings.companyName)}</span>`;document.getElementById('modal-dynamic-logo').innerHTML=`<img src="${settings.logoImg}" alt="Logo">`;}
-            document.getElementById('footer-about-title').innerText='About '+settings.companyName; document.getElementById('footer-about-text').innerText=settings.about; document.getElementById('footer-address').innerText=settings.address; document.getElementById('footer-phone').innerText=settings.phone; document.getElementById('footer-email').innerText=settings.email; document.getElementById('footer-copyright').innerText=settings.copyright; document.getElementById('whatsapp-link').href='https://wa.me/'+settings.phone.replace(/[^0-9]/g,'');
-            ['company-name','address','phone','email','about','copyright'].forEach(k=>{const el=document.getElementById('setting-'+k);if(el)el.value=settings[k==='company-name'?'companyName':k]||'';});
+        function toggleAuthView(view) {
+            document.getElementById('form-login').style.display = 'none';
+            document.getElementById('form-register').style.display = 'none';
+            document.getElementById('form-forgot').style.display = 'none';
+
+            if (view === 'register') {
+                document.getElementById('form-register').style.display = 'block';
+                document.getElementById('auth-subtitle-text').innerText = 'Create a new customer account';
+            } else if (view === 'forgot') {
+                document.getElementById('form-forgot').style.display = 'block';
+                document.getElementById('auth-subtitle-text').innerText = 'Reset your account password';
+            } else {
+                document.getElementById('form-login').style.display = 'block';
+                document.getElementById('auth-subtitle-text').innerText = 'Sign in to manage your account';
+            }
         }
-        function previewLogoFile(e){ const f=e.target.files[0]; if(!f)return; const r=new FileReader(); r.onload=x=>{tempLogoBase64=x.target.result;const i=document.getElementById('logo-preview-img');i.src=tempLogoBase64;i.style.display='block';};r.readAsDataURL(f); }
-        function previewProductImage(e){ const f=e.target.files[0]; if(!f)return; const r=new FileReader();r.onload=x=>{tempProductImageBase64=x.target.result;const i=document.getElementById('p-img-preview');i.src=tempProductImageBase64;i.style.display='block';};r.readAsDataURL(f); }
-        function previewPMLogo(e){ const f=e.target.files[0]; if(!f)return; const r=new FileReader();r.onload=x=>{tempPMLogoBase64=x.target.result;const i=document.getElementById('pm-logo-preview');i.src=tempPMLogoBase64;i.style.display='block';};r.readAsDataURL(f); }
-        function handleSaveSiteSettings(e){e.preventDefault();const c=safeJSON('tb_site_settings',{});const u={companyName:document.getElementById('setting-company-name').value.trim()||'TazaBazar',logoImg:tempLogoBase64||c.logoImg||'',address:document.getElementById('setting-address').value.trim(),phone:document.getElementById('setting-phone').value.trim(),email:document.getElementById('setting-email').value.trim(),about:document.getElementById('setting-about').value.trim(),copyright:document.getElementById('setting-copyright').value.trim()};localStorage.setItem('tb_site_settings',JSON.stringify(u));logAuditAction('EDIT','Site Settings','Updated website settings');alert('✅ Site Settings updated successfully!');location.reload();}
 
-        function toggleAuthView(view){ ['form-login','form-register','form-forgot'].forEach(id=>document.getElementById(id).style.display='none');document.getElementById('form-'+view).style.display='block';document.getElementById('auth-subtitle-text').innerText=view==='login'?'Sign in to manage your account':view==='register'?'Create your customer account':'Reset your account password'; }
-        function normalizePhone(v){let d=String(v||'').replace(/\D/g,'');if(d.startsWith('880'))d='0'+d.slice(3);if(d.startsWith('0'))return d;return d;}
-        function validatePhoneNumber(phone){return /^01[3-9]\d{8}$/.test(normalizePhone(phone));}
-        function handleCustomerRegistration(e){e.preventDefault();const name=document.getElementById('reg-name').value.trim(),phone=normalizePhone(document.getElementById('reg-phone').value),pass=document.getElementById('reg-pass').value;if(!validatePhoneNumber(phone)){alert('⚠️ Enter a valid Bangladesh mobile number (01XXXXXXXXX).');return;}if(pass.length<6){alert('⚠️ Password must be at least 6 characters.');return;}let cs=getCustomers();if(cs.some(c=>normalizePhone(c.phone)===phone)){alert('⚠️ This mobile number is already registered.');return;}sha256(pass).then(hash=>{cs.push({name,phone,passHash:hash,avatar:''});localStorage.setItem('tb_registered_customers',JSON.stringify(cs));alert('🎉 Account created successfully!');toggleAuthView('login');document.getElementById('login-identifier').value=phone;document.getElementById('login-pass').value=pass;});}
-        function handleForgotPasswordReset(e){e.preventDefault();const name=document.getElementById('reset-name').value.trim(),phone=normalizePhone(document.getElementById('reset-phone').value),newPass=document.getElementById('reset-new-pass').value;if(!validatePhoneNumber(phone)){alert('⚠️ Enter a valid Bangladesh mobile number.');return;}if(newPass.length<6){alert('⚠️ New password must be at least 6 characters.');return;}let cs=getCustomers(),idx=cs.findIndex(c=>normalizePhone(c.phone)===phone&&c.name.toLowerCase()===name.toLowerCase());if(idx<0){alert('❌ Account not found.');return;}sha256(newPass).then(h=>{cs[idx].passHash=h;delete cs[idx].pass;localStorage.setItem('tb_registered_customers',JSON.stringify(cs));alert('🎉 Password reset successfully.');toggleAuthView('login');});}
+        function validatePhoneNumber(phoneDigits) {
+            const cleanDigits = phoneDigits.replace(/[^0-9]/g, '');
+            if (cleanDigits.length !== 11 || !cleanDigits.startsWith('01')) {
+                alert("❌ Please enter a valid Bangladesh phone number (e.g., 01712345678).");
+                return false;
+            }
+            return true;
+        }
 
-        function openProfileModal(){if(!currentUser)return;document.getElementById('modal-profile-name').innerText=currentUser.name;document.getElementById('modal-profile-role').innerText=currentUser.role==='admin'?'Super Admin':currentUser.role==='employee'?'Employee':'Customer';document.getElementById('modal-profile-img').src=currentUser.avatar||'https://via.placeholder.com/150';openModal('profile-modal');}
-        function handleProfileUpload(e){const f=e.target.files[0];if(!f||!currentUser)return;const r=new FileReader();r.onload=x=>{currentUser.avatar=x.target.result;localStorage.setItem('tb_user',JSON.stringify(currentUser));if(currentUser.role==='user'){let cs=getCustomers();let i=cs.findIndex(c=>normalizePhone(c.phone)===normalizePhone(currentUser.phone));if(i>=0){cs[i].avatar=currentUser.avatar;localStorage.setItem('tb_registered_customers',JSON.stringify(cs));}}checkAuthState();openProfileModal();};r.readAsDataURL(f);}
-        function checkAuthState(){const saved=safeJSON('tb_user',null);currentUser=saved;if(currentUser){document.getElementById('auth-logged-out').style.display='none';document.getElementById('auth-logged-in').style.display='flex';document.getElementById('user-display-name').innerText=currentUser.name;document.getElementById('user-header-avatar').src=currentUser.avatar||'https://via.placeholder.com/150';document.getElementById('btn-admin-dash').style.display=['admin','employee'].includes(currentUser.role)?'inline-block':'none';}else{document.getElementById('auth-logged-out').style.display='flex';document.getElementById('auth-logged-in').style.display='none';}}
+        function handleCustomerRegistration(e) {
+            e.preventDefault();
+            const name = document.getElementById('reg-name').value.trim();
+            const rawPhone = document.getElementById('reg-phone').value.trim();
+            const pass = document.getElementById('reg-pass').value.trim();
+            if (!validatePhoneNumber(rawPhone)) return;
+            if (pass.length < 6) { alert("⚠️ Password must be at least 6 characters long!"); return; }
+            let customers = getCustomers();
+            if (customers.some(c => c.phone === rawPhone)) { alert("⚠️ An account with this phone number already exists!"); return; }
+            customers.push({ name, phone: rawPhone, pass, avatar: '' });
+            localStorage.setItem('tb_registered_customers', JSON.stringify(customers));
+            alert("🎉 Registration successful! You can now log in.");
+            toggleAuthView('login');
+        }
 
-        function renderCategorySidebar(){const sidebar=document.getElementById('main-sidebar-list');if(document.getElementById('home-view').style.display!=='none'){sidebar.innerHTML=getCategories().map(c=>`<li><a onclick="filterByCategory('${esc(c).replace(/'/g,"\\'")}')"><i class="fa fa-tag"></i> ${esc(c)}</a></li>`).join('');}renderCategoryOptions();}
-        function renderCategoryOptions(){const s=document.getElementById('p-category');if(s)s.innerHTML=getCategories().map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('');}
-        function handleAddCategory(e){e.preventDefault();const n=document.getElementById('cat-name-input').value.trim();if(!n)return;let cs=getCategories();if(cs.some(c=>c.toLowerCase()===n.toLowerCase())){alert('⚠️ Category already exists.');return;}cs.push(n);localStorage.setItem('tb_cats',JSON.stringify(cs));logAuditAction('CREATE','Category',`Added category: ${n}`);e.target.reset();renderCategorySidebar();renderCategoriesAdminList();}
-        function renderCategoriesAdminList(){const l=document.getElementById('admin-category-list');if(!l)return;l.innerHTML=getCategories().map((c,i)=>`<tr><td>${esc(c)}</td><td><button class="btn-delete" onclick="deleteCategory(${i})">Delete</button></td></tr>`).join('');}
-        function deleteCategory(i){let cs=getCategories(),removed=cs[i];if(!removed)return;if(getProducts().some(p=>p.category===removed)){alert('⚠️ This category is used by products.');return;}if(confirm('Delete category?')){cs.splice(i,1);localStorage.setItem('tb_cats',JSON.stringify(cs));logAuditAction('DELETE','Category',`Deleted category: ${removed}`);renderCategorySidebar();renderCategoriesAdminList();}}
+        function handleForgotPasswordReset(e) {
+            e.preventDefault();
+            const name = document.getElementById('reset-name').value.trim();
+            const rawPhone = document.getElementById('reset-phone').value.trim();
+            const newPass = document.getElementById('reset-new-pass').value.trim();
+            if (!validatePhoneNumber(rawPhone)) return;
+            if (newPass.length < 6) { alert("⚠️ New password must be at least 6 characters long!"); return; }
+            let customers = getCustomers();
+            const customerIndex = customers.findIndex(c => c.phone === rawPhone && c.name.toLowerCase() === name.toLowerCase());
+            if (customerIndex !== -1) {
+                customers[customerIndex].pass = newPass;
+                localStorage.setItem('tb_registered_customers', JSON.stringify(customers));
+                alert("🎉 Password reset successful! You can now log in with your new password.");
+                toggleAuthView('login');
+            } else alert("❌ Account not found! Please check your name and phone number.");
+        }
 
-        function renderAdminSidebar(){const sidebar=document.getElementById('main-sidebar-list');const admin=currentUser?.role==='admin',perms=currentUser?.permissions||[];let h='';if(admin||perms.includes('orders'))h+=`<li><a id="side-orders" onclick="switchAdminTab('orders-list',this)"><i class="fa fa-shopping-bag"></i> Live Orders</a></li>`;if(admin||perms.includes('products')){h+=`<li><a id="side-categories" onclick="switchAdminTab('manage-categories',this)"><i class="fa fa-list-alt"></i> Categories</a></li>`;h+=`<li><a id="side-products" onclick="switchAdminTab('manage-products',this)"><i class="fa fa-boxes"></i> All Products</a></li>`;h+=`<li><a id="side-store" onclick="switchAdminTab('store-management',this)"><i class="fa fa-store"></i> Store Management</a></li>`;}if(admin||perms.includes('payments'))h+=`<li><a id="side-pm" onclick="switchAdminTab('payment-methods',this)"><i class="fa fa-credit-card"></i> Payment Methods</a></li>`;if(admin||perms.includes('reports'))h+=`<li><a id="side-accounts" onclick="switchAdminTab('manage-accounts',this)"><i class="fa fa-calculator"></i> Accounts (হিসাব)</a></li>`;if(admin){h+=`<li><a id="side-audit" onclick="switchAdminTab('audit-history',this)"><i class="fa fa-history"></i> Audit Log (History)</a></li><li><a id="side-settings" onclick="switchAdminTab('site-settings',this)"><i class="fa fa-cog"></i> Site Settings</a></li><li><a id="side-employees" onclick="switchAdminTab('manage-employees',this)"><i class="fa fa-users"></i> Employees</a></li>`;}h+=`<li><a id="side-pass" onclick="switchAdminTab('change-password',this)"><i class="fa fa-key"></i> Change Password</a></li>`;sidebar.innerHTML=h;}
-        function filterByCategory(cat){showHome();document.getElementById('section-title').innerText=cat;renderProducts(getProducts().filter(p=>p.category===cat));}
-        function searchProducts(){showHome();const q=document.getElementById('search-input').value.toLowerCase();renderProducts(getProducts().filter(p=>(p.title+' '+p.category).toLowerCase().includes(q)));}
-        function renderProducts(items){const grid=document.getElementById('main-product-grid');grid.innerHTML=items.length?'':'<p style="color:gray;">No products found.</p>';items.forEach(p=>{const d=Number(p.discount)||0,fp=finalPrice(p),stock=Number(p.quantity)||0;grid.innerHTML+=`<div class="product-card"><div class="discount-badge" style="display:${d?'block':'none'}">${d}% OFF</div><div class="img-box"><img src="${p.image}" alt="${esc(p.title)}"></div><div class="product-title">${esc(p.title)}</div><div class="price-box"><span class="current-price">${money(fp)}</span>${d?`<span class="original-price">${money(p.price)}</span>`:''}</div><div style="font-size:12px;color:${stock>0?'#2e7d32':'#d32f2f'};margin-bottom:7px;">${stock>0?`In Stock: ${stock}`:'Out of Stock'}</div><button class="btn-card" ${stock<=0?'disabled style="opacity:.5;cursor:not-allowed"':''} onclick="addToCart(${p.id})">${stock>0?'Add to Cart':'Out of Stock'}</button></div>`;});}
+        function handleAccountPasswordChange(e) {
+            e.preventDefault();
+            const currentPassInput = document.getElementById('curr-pass').value;
+            const newPass = document.getElementById('new-dash-pass').value;
+            const confirmPass = document.getElementById('confirm-dash-pass').value;
 
-        function toggleCartDrawer(){document.getElementById('cart-drawer').classList.toggle('open');} function hideCartDrawer(){document.getElementById('cart-drawer').classList.remove('open');}
-        function addToCart(id){const p=getProducts().find(x=>x.id===id);if(!p)return;const stock=Number(p.quantity)||0;if(stock<=0){alert('⚠️ This product is out of stock.');return;}const existing=cart.find(x=>x.id===id);if(existing){if(existing.qty>=stock){alert('⚠️ Not enough stock available.');return;}existing.qty++;}else cart.push({...p,price:finalPrice(p),qty:1});updateCartUI();toggleCartDrawer();}
-        function changeCartQty(id,change){const item=cart.find(x=>x.id===id),p=getProducts().find(x=>x.id===id);if(!item)return;const max=Number(p?.quantity)||0;item.qty=Math.max(0,Math.min(max,item.qty+change));if(item.qty===0)cart=cart.filter(x=>x.id!==id);updateCartUI();}
-        function updateCartUI(){const c=document.getElementById('cart-items-container');let sub=0,count=0;c.innerHTML='';if(!cart.length)c.innerHTML='<p style="text-align:center;color:gray;margin-top:20px;">Your cart is empty!</p>';cart.forEach(i=>{const t=i.price*i.qty;sub+=t;count+=i.qty;c.innerHTML+=`<div class="cart-item"><div><strong>${esc(i.title)}</strong><br><span style="font-size:12px;color:gray;">${money(i.price)} × ${i.qty} = ${money(t)}</span></div><div><button class="cart-qty-btn" onclick="changeCartQty(${i.id},-1)">-</button> <strong>${i.qty}</strong> <button class="cart-qty-btn" onclick="changeCartQty(${i.id},1)">+</button></div></div>`;});document.getElementById('cart-count').innerText=count;document.getElementById('cart-subtotal').innerText=money(sub);document.getElementById('modal-total-price-1').innerText=money(sub);}
+            if (newPass !== confirmPass) {
+                alert("❌ New password and confirmation password do not match!");
+                return;
+            }
 
-        function renderPaymentMethodsGrid(){const g=document.getElementById('checkout-payment-grid');if(!g)return;const ms=getPaymentMethods();if(!ms.length){g.innerHTML='<p>No payment method configured.</p>';return;}selectedPaymentMethod=ms[0].name;g.innerHTML=ms.map((m,i)=>`<div class="payment-card ${i===0?'selected':''}" onclick="selectPaymentMethod(${JSON.stringify(m.name)},this)">${m.logo?`<img src="${m.logo}" alt="Logo">`:''}<span>${esc(m.name)}</span></div>`).join('');}
-        function selectPaymentMethod(m,e){selectedPaymentMethod=m;document.querySelectorAll('.payment-card').forEach(x=>x.classList.remove('selected'));e.classList.add('selected');}
-        function goToPanel(n){[1,2,3].forEach(i=>document.getElementById('checkout-panel-'+i).style.display='none');document.getElementById('checkout-panel-'+n).style.display='block';}
-        function goToPanel2(){const name=document.getElementById('cust-name').value.trim(),phone=normalizePhone(document.getElementById('cust-phone').value),address=document.getElementById('cust-address').value.trim();if(!name||!phone||!address){alert('Please fill in your name, phone, and delivery address!');return;}if(!validatePhoneNumber(phone)){alert('⚠️ Enter a valid Bangladesh mobile number.');return;}if(selectedPaymentMethod.toLowerCase()==='cash on delivery'){confirmOrder();return;}document.getElementById('selected-method-text').innerText=selectedPaymentMethod;const m=selectedPaymentMethod.toLowerCase();document.getElementById('mfs-fields').style.display=['bkash','nagad','rocket'].includes(m)?'block':'none';document.getElementById('card-fields').style.display=['bkash','nagad','rocket'].includes(m)?'none':'block';document.getElementById('mfs-label').innerText=`Enter ${selectedPaymentMethod} Mobile Number:`;goToPanel(2);}
-        function sendOTPAndGoToPanel3(){const m=selectedPaymentMethod.toLowerCase();if(['bkash','nagad','rocket'].includes(m)&&!validatePhoneNumber(document.getElementById('mfs-account-number').value)){alert('⚠️ Enter a valid wallet number.');return;}pendingOtp=String(Math.floor(100000+Math.random()*900000));sessionStorage.setItem('tb_demo_otp',pendingOtp);alert('Demo OTP generated. In a real deployment, connect an SMS gateway to send it.\n\nFor this static demo, OTP: '+pendingOtp);goToPanel(3);}
-        function openCheckout(){if(!currentUser){alert('⚠️ Please Login first!');openModal('auth-modal');return;}if(!cart.length){alert('Cart is empty!');return;}hideCartDrawer();document.getElementById('cust-name').value=currentUser.name||'';document.getElementById('cust-phone').value=currentUser.phone||'';document.getElementById('cust-address').value='';renderPaymentMethodsGrid();goToPanel(1);openModal('checkout-modal');}
-        function confirmOrder(){if(!cart.length){alert('Cart is empty!');return;}const products=getProducts();for(const i of cart){const p=products.find(x=>x.id===i.id);if(!p||Number(p.quantity)<i.qty){alert(`⚠️ Stock changed for ${i.title}. Please update your cart.`);return;}}const total=cart.reduce((a,i)=>a+i.price*i.qty,0);const phone=normalizePhone(document.getElementById('cust-phone').value);const otp=sessionStorage.getItem('tb_demo_otp');if(selectedPaymentMethod.toLowerCase()!=='cash on delivery'&&document.getElementById('checkout-panel-3').style.display!=='none'&&document.getElementById('otp-input').value!==otp){alert('❌ Invalid OTP.');return;}const order={id:'ORD-'+Date.now().toString().slice(-8),customerName:document.getElementById('cust-name').value.trim(),phone,address:document.getElementById('cust-address').value.trim(),paymentMethod:selectedPaymentMethod,total,status:'Pending',items:cart.map(i=>({id:i.id,title:i.title,qty:i.qty,price:i.price}))};localStorage.setItem('tb_orders',JSON.stringify([order,...getOrders()]));products.forEach(p=>{const i=cart.find(x=>x.id===p.id);if(i)p.quantity=Math.max(0,(Number(p.quantity)||0)-i.qty);});localStorage.setItem('tb_prods',JSON.stringify(products));cart=[];sessionStorage.removeItem('tb_demo_otp');pendingOtp=null;updateCartUI();renderProducts(products);closeModal('checkout-modal');alert(`🎉 Order ${order.id} placed successfully via ${selectedPaymentMethod}!`);showAdminDashboard();}
+            if (newPass.length < 6) {
+                alert("⚠️ New password must be at least 6 characters long!");
+                return;
+            }
 
-        function updateOrderStatus(id,status,sel){let os=getOrders(),i=os.findIndex(o=>o.id===id);if(i<0)return;const old=os[i].status||'Pending';os[i].status=status;localStorage.setItem('tb_orders',JSON.stringify(os));if(sel)sel.className=`status-select status-${status.toLowerCase()}`;logAuditAction('STATUS_CHANGE',id,`Changed order status from '${old}' to '${status}'`);renderOrdersList();calculateAccounts();updateDashboardStats();}
-        function deleteOrder(id){if(!confirm(`Delete order ${id}?`))return;const o=getOrders().find(x=>x.id===id);localStorage.setItem('tb_orders',JSON.stringify(getOrders().filter(x=>x.id!==id)));logAuditAction('DELETE',id,`Deleted order placed by ${o?.customerName||'Customer'}`);renderOrdersList();calculateAccounts();updateDashboardStats();}
-        function handleAddPaymentMethod(e){e.preventDefault();const name=document.getElementById('pm-name').value.trim();if(!name)return;let ms=getPaymentMethods();if(ms.some(m=>m.name.toLowerCase()===name.toLowerCase())){alert('⚠️ Payment method already exists.');return;}ms.push({id:Date.now(),name,logo:tempPMLogoBase64});localStorage.setItem('tb_payment_methods',JSON.stringify(ms));logAuditAction('CREATE','Payment Gateway',`Added payment gateway: ${name}`);e.target.reset();tempPMLogoBase64='';document.getElementById('pm-logo-preview').style.display='none';renderPaymentMethodsListAdmin();renderPaymentMethodsGrid();}
-        function renderPaymentMethodsListAdmin(){const l=document.getElementById('admin-pm-list');if(!l)return;l.innerHTML=getPaymentMethods().map((m,i)=>`<tr><td>${m.logo?`<img src="${m.logo}" style="height:30px;max-width:60px;object-fit:contain;">`:'No Logo'}</td><td><strong>${esc(m.name)}</strong></td><td><button class="btn-delete" onclick="deletePaymentMethod(${i})">Delete</button></td></tr>`).join('');}
-        function deletePaymentMethod(i){let ms=getPaymentMethods();if(ms.length<=1){alert('⚠️ Keep at least one payment method.');return;}const r=ms[i];if(!r)return;if(confirm('Delete payment method?')){ms.splice(i,1);localStorage.setItem('tb_payment_methods',JSON.stringify(ms));logAuditAction('DELETE','Payment Gateway',`Deleted payment gateway: ${r.name}`);renderPaymentMethodsListAdmin();renderPaymentMethodsGrid();}}
+            if (currentUser.role === 'admin') {
+                if (currentPassInput !== getAdminPass()) {
+                    alert("❌ Incorrect Current Password!");
+                    return;
+                }
+                localStorage.setItem('tb_admin_pass', newPass);
+                logAuditAction('EDIT', 'Password Change', 'Super Admin updated their dashboard password');
+                alert("✅ Admin Password updated successfully!");
+            } else if (currentUser.role === 'employee') {
+                let employees = getEmployees();
+                let idx = employees.findIndex(emp => emp.id.toLowerCase() === currentUser.id.toLowerCase());
+                
+                if (idx !== -1) {
+                    if (employees[idx].pass !== currentPassInput) {
+                        alert("❌ Incorrect Current Password!");
+                        return;
+                    }
+                    employees[idx].pass = newPass;
+                    localStorage.setItem('tb_employees', JSON.stringify(employees));
+                    logAuditAction('EDIT', 'Password Change', `Employee ${currentUser.id} changed password`);
+                    alert("✅ Employee Password updated successfully!");
+                }
+            } else if (currentUser.role === 'user') {
+                let customers = getCustomers();
+                let idx = customers.findIndex(c => c.phone === currentUser.phone);
+                if (idx !== -1) {
+                    if (customers[idx].pass !== currentPassInput) {
+                        alert("❌ Incorrect Current Password!");
+                        return;
+                    }
+                    customers[idx].pass = newPass;
+                    localStorage.setItem('tb_registered_customers', JSON.stringify(customers));
+                    alert("✅ Password updated successfully!");
+                }
+            }
 
-        async function handleSecureLogin(e){e.preventDefault();const id=document.getElementById('login-identifier').value.trim().toLowerCase(),pass=document.getElementById('login-pass').value;if(id==='admin'&&await adminPasswordMatches(pass)){saveAndLogin({name:'Super Admin',role:'admin',id:'admin',permissions:['all']});showAdminDashboard();return;}let es=getEmployees();for(const emp of es){const ok=emp.id.toLowerCase()===id&&await passwordMatches(emp,pass);if(ok){saveAndLogin({name:emp.name,role:'employee',id:emp.id,permissions:emp.permissions||[],avatar:emp.avatar||''});showAdminDashboard();return;}}let cs=getCustomers();for(const c of cs){const ok=(normalizePhone(c.phone)===normalizePhone(id)||c.name.toLowerCase()===id)&&await passwordMatches(c,pass);if(ok){saveAndLogin({name:c.name,role:'user',phone:normalizePhone(c.phone),avatar:c.avatar||''});return;}}alert('❌ Invalid Credentials!');}
-        async function passwordMatches(obj,pass){if(obj.passHash)return (await sha256(pass))===obj.passHash;if(obj.pass)return obj.pass===pass;return false;}
-        function saveAndLogin(u){currentUser=u;localStorage.setItem('tb_user',JSON.stringify(u));checkAuthState();closeModal('auth-modal');}
-        function handleLogout(){localStorage.removeItem('tb_user');currentUser=null;location.reload();}
-        async function handleAccountPasswordChange(e){e.preventDefault();const cur=document.getElementById('curr-pass').value,newp=document.getElementById('new-dash-pass').value,conf=document.getElementById('confirm-dash-pass').value;if(newp!==conf||newp.length<6){alert('⚠️ New passwords must match and be at least 6 characters.');return;}if(currentUser.role==='admin'){if(!(await adminPasswordMatches(cur))){alert('❌ Incorrect Current Password!');return;}localStorage.setItem(ADMIN_CREDENTIAL_KEY,await sha256(newp));localStorage.removeItem('tb_admin_pass_hash');localStorage.removeItem('tb_admin_pass');}else if(currentUser.role==='employee'){let es=getEmployees(),i=es.findIndex(x=>x.id.toLowerCase()===currentUser.id.toLowerCase());if(i<0||!(await passwordMatches(es[i],cur))){alert('❌ Incorrect Current Password!');return;}es[i].passHash=await sha256(newp);delete es[i].pass;localStorage.setItem('tb_employees',JSON.stringify(es));}else{let cs=getCustomers(),i=cs.findIndex(x=>normalizePhone(x.phone)===normalizePhone(currentUser.phone));if(i<0||!(await passwordMatches(cs[i],cur))){alert('❌ Incorrect Current Password!');return;}cs[i].passHash=await sha256(newp);delete cs[i].pass;localStorage.setItem('tb_registered_customers',JSON.stringify(cs));}logAuditAction('EDIT','Password Change',`${currentUser.role} changed password`);alert('✅ Password updated successfully!');e.target.reset();}
+            document.getElementById('curr-pass').value = '';
+            document.getElementById('new-dash-pass').value = '';
+            document.getElementById('confirm-dash-pass').value = '';
+        }
 
-        function showAdminDashboard(){document.getElementById('home-view').style.display='none';document.getElementById('admin-view').style.display='block';document.getElementById('role-title').innerText=currentUser?.role==='admin'?'Super Admin':`Employee (${currentUser?.name||''})`;renderAdminSidebar();const perms=currentUser?.permissions||[];let first=currentUser?.role==='admin'?'orders-list':perms.includes('orders')?'orders-list':perms.includes('products')?'store-management':perms.includes('payments')?'payment-methods':perms.includes('reports')?'manage-accounts':'change-password';switchAdminTab(first,document.getElementById('side-'+({'orders-list':'orders','store-management':'store','payment-methods':'pm','manage-accounts':'accounts','change-password':'pass'}[first]||'store')));renderOrdersList();renderCategoriesAdminList();renderManageProducts();renderStoreInventory();renderPaymentMethodsListAdmin();renderEmployeesList();renderAuditHistoryList();calculateAccounts();updateDashboardStats();renderCategoryOptions();populatePriceDiscountProducts();setViewMode(localStorage.getItem('tb_view_mode')||'desktop');}
+        function saveAndLogin(user) {
+            localStorage.setItem('tb_user', JSON.stringify(user));
+            checkAuthState();
+            closeModal('auth-modal');
+        }
 
-        function handleItemUpload(e){e.preventDefault();const title=document.getElementById('p-title').value.trim(),category=document.getElementById('p-category').value,quantity=Math.max(0,parseInt(document.getElementById('p-quantity').value,10)||0);if(!title||!category)return;let products=getProducts();if(editingProductId){const i=products.findIndex(x=>x.id===editingProductId);if(i<0)return;const old=products[i];products[i]={...old,title,category,quantity,image:tempProductImageBase64||old.image};localStorage.setItem('tb_prods',JSON.stringify(products));logAuditAction('EDIT',old.id,`Updated product: ${title}, stock ${quantity}`);alert('✅ Product & inventory updated.');}else{if(!tempProductImageBase64){alert('⚠️ Please select a product image.');return;}const p={id:Date.now(),title,category,price:0,discount:0,quantity,image:tempProductImageBase64};products.unshift(p);localStorage.setItem('tb_prods',JSON.stringify(products));logAuditAction('CREATE',p.id,`Added product: ${title} with stock ${quantity}`);alert('🎉 Product added to Store Management. Now set its price/discount in the Price & Discount panel.');}cancelProductEdit();renderProducts(products);renderManageProducts();renderStoreInventory();populatePriceDiscountProducts(editingProductId||products[0]?.id);updateDashboardStats();}
-        function populatePriceDiscountProducts(selectedId){const s=document.getElementById('pd-product');if(!s)return;const ps=getProducts();s.innerHTML=ps.length?ps.map(p=>`<option value="${p.id}">${esc(p.title)}</option>`).join(''):'<option value="">No products</option>';if(selectedId)s.value=selectedId;loadPriceDiscountPanel();}
-        function loadPriceDiscountPanel(){const id=Number(document.getElementById('pd-product')?.value),p=getProducts().find(x=>x.id===id);if(!p)return;document.getElementById('pd-price').value=p.price||0;document.getElementById('pd-discount').value=p.discount||0;updatePricePreview();}
-        function updatePricePreview(){const p={price:Number(document.getElementById('pd-price')?.value)||0,discount:Number(document.getElementById('pd-discount')?.value)||0};const el=document.getElementById('pd-final-price');if(el)el.innerText=money(finalPrice(p));}
-        function handlePriceDiscountOnly(e){e.preventDefault();const id=Number(document.getElementById('pd-product').value),price=Number(document.getElementById('pd-price').value),discount=Number(document.getElementById('pd-discount').value);if(price<0||discount<0||discount>99){alert('⚠️ Invalid price or discount.');return;}let ps=getProducts(),i=ps.findIndex(p=>p.id===id);if(i<0)return;ps[i].price=price;ps[i].discount=discount;localStorage.setItem('tb_prods',JSON.stringify(ps));logAuditAction('EDIT',id,`Updated price to ${money(price)} and discount to ${discount}%`);renderProducts(ps);renderManageProducts();renderStoreInventory();alert('✅ Price & Discount saved successfully.');}
-        function renderStoreInventory(){const l=document.getElementById('store-inventory-list');if(!l)return;l.innerHTML=getProducts().map(p=>`<tr><td><img src="${p.image}" style="width:45px;height:45px;object-fit:contain;"></td><td><strong>${esc(p.title)}</strong></td><td>${esc(p.category)}</td><td><strong>${Number(p.quantity)||0}</strong></td><td>${money(p.price)}</td><td>${Number(p.discount)||0}%</td><td><strong>${money(finalPrice(p))}</strong></td><td><button class="btn-delete" onclick="editProduct(${p.id})">Edit</button> <button class="btn-delete" onclick="deleteProduct(${p.id})">Delete</button></td></tr>`).join('');}
-        function editProduct(id){const p=getProducts().find(x=>x.id===id);if(!p)return;editingProductId=id;populatePriceDiscountProducts(id);document.getElementById('pd-price').value=p.price||0;document.getElementById('pd-discount').value=p.discount||0;document.getElementById('p-title').value=p.title;document.getElementById('p-category').value=p.category;document.getElementById('p-quantity').value=p.quantity||0;tempProductImageBase64=p.image;document.getElementById('p-img-preview').src=p.image;document.getElementById('p-img-preview').style.display='block';document.getElementById('p-image-file').required=false;document.getElementById('product-save-btn').innerText='💾 Update Product & Stock';document.getElementById('product-cancel-edit').style.display='block';switchAdminTab('store-management',document.getElementById('side-store'));}
+        function handleLogout() { localStorage.removeItem('tb_user'); location.reload(); }
+
+        function showAdminDashboard() {
+            document.getElementById('home-view').style.display = 'none';
+            document.getElementById('admin-view').style.display = 'block';
+
+            const isSuperAdmin = currentUser && currentUser.role === 'admin';
+            document.getElementById('role-title').innerText = isSuperAdmin ? 'Super Admin' : 'Employee (' + currentUser.name + ')';
+
+            renderAdminSidebar();
+
+            const perms = currentUser ? (currentUser.permissions || []) : [];
+            if (isSuperAdmin || perms.includes('orders')) {
+                switchAdminTab('orders-list', document.getElementById('side-orders'));
+            } else if (perms.includes('products')) {
+                switchAdminTab('manage-products', document.getElementById('side-products'));
+            }
+
+            renderOrdersList();
+            renderCategoriesAdminList();
+            renderManageProducts();
+            renderEmployeesList();
+            renderPaymentMethodsListAdmin();
+            renderAuditHistoryList();
+            updateDashboardStats();
+            calculateAccounts();
+        }
+
+        async function handleItemUpload(e) {
+            e.preventDefault();
+            if (!tempProductImageBase64) { alert('⚠️ Please select an image file first!'); return; }
+            const title = document.getElementById('p-title').value.trim();
+            const category = document.getElementById('p-category').value;
+            const price = parseFloat(document.getElementById('p-price').value);
+            const discount = parseFloat(document.getElementById('p-discount').value) || 0;
+            const quantity = parseInt(document.getElementById('p-quantity').value, 10) || 0;
+            let image = tempProductImageBase64;
+
+            // Put product images in Supabase Storage so every device/network can load the same image.
+            if (sb && cloudReady) {
+                const fileInput = document.getElementById('p-image-file');
+                const file = fileInput.files[0];
+                if (file) {
+                    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '-');
+                    const path = `products/${Date.now()}-${safeName}`;
+                    const { error } = await sb.storage.from('product-images').upload(path, file, { cacheControl: '3600', upsert: false, contentType: file.type });
+                    if (error) { alert('❌ Image upload failed: ' + error.message); return; }
+                    const { data } = sb.storage.from('product-images').getPublicUrl(path);
+                    image = data.publicUrl;
+                }
+            }
+
+            let products = getProducts();
+            const newProduct = { id: Date.now(), title, category, price, discount, quantity, image };
+            products.unshift(newProduct);
+            localStorage.setItem('tb_prods', JSON.stringify(products));
+            logAuditAction('CREATE', newProduct.id, `Uploaded new product: ${title} (Price: ৳${price}, Stock: ${quantity})`);
+            alert('🎉 Product Uploaded Successfully!');
+            document.getElementById('p-title').value = '';
+            document.getElementById('p-price').value = '';
+            document.getElementById('p-discount').value = '';
+            document.getElementById('p-quantity').value = '0';
+            document.getElementById('p-image-file').value = '';
+            document.getElementById('p-img-preview').style.display = 'none';
+            tempProductImageBase64 = '';
+            renderProducts(products); renderManageProducts(); updateDashboardStats();
+        }
+
+        function renderManageProducts() {
+            const list = document.getElementById('admin-product-list');
+            if(!list) return;
+            list.innerHTML = '';
+            const products = getProducts();
+
+            products.forEach(p => {
+                const discount = parseFloat(p.discount) || 0;
+                let priceText = `৳${p.price}`;
+                if (discount > 0) {
+                    const finalPrice = Math.round(p.price - (p.price * (discount / 100)));
+                    priceText = `৳${finalPrice} <span style="font-size:11px; color:red;">(${discount}% OFF)</span>`;
+                }
+
+                list.innerHTML += `
+                    <tr>
+                        <td><img src="${p.image}" style="width:40px; height:40px; object-fit:contain;"></td>
+                        <td><strong>${p.title}</strong></td>
+                        <td>${p.category}</td>
+                        <td>${priceText}</td>
+                        <td><strong>${p.quantity}</strong></td>
+                        <td><button class="btn-delete" onclick="deleteProduct(${p.id})"><i class="fa fa-trash"></i> Delete</button></td>
+                    </tr>
+                `;
+            });
+        }
+
+        function deleteProduct(id) {
+            if (confirm("Are you sure you want to delete this product?")) {
+                let products = getProducts();
+                const target = products.find(p => p.id === id);
+                
+                products = products.filter(p => p.id !== id);
+                localStorage.setItem('tb_prods', JSON.stringify(products));
+
+                logAuditAction('DELETE', id, `Deleted product: ${target ? target.title : 'Product'}`);
+
+                renderProducts(products);
+                renderManageProducts();
+                updateDashboardStats();
+            }
+        }
+
+        function createEmployeeAccount(e) {
+            e.preventDefault();
+            const name = document.getElementById('emp-name').value.trim();
+            const id = document.getElementById('emp-id').value.trim();
+            const pass = document.getElementById('emp-pass').value.trim();
+
+            if (pass.length < 6) {
+                alert("⚠️ Employee Password must be at least 6 characters long!");
+                return;
+            }
+
+            const permissions = [];
+            if(document.getElementById('perm-orders').checked) permissions.push('orders');
+            if(document.getElementById('perm-products').checked) permissions.push('products');
+            if(document.getElementById('perm-payments').checked) permissions.push('payments');
+            if(document.getElementById('perm-reports').checked) permissions.push('reports');
+
+            let employees = getEmployees();
+            if(employees.some(e => e.id.toLowerCase() === id.toLowerCase())) { alert('⚠️ ID already exists!'); return; }
+
+            employees.push({ name, id, pass, permissions });
+            localStorage.setItem('tb_employees', JSON.stringify(employees));
+
+            logAuditAction('CREATE', id, `Created employee account for ${name}`);
+
+            alert('🎉 Employee Account Created Successfully!');
+            document.getElementById('emp-name').value = '';
+            document.getElementById('emp-id').value = '';
+            document.getElementById('emp-pass').value = '';
+            renderEmployeesList();
+        }
+
+        function renderEmployeesList() {
+            const list = document.getElementById('employee-table-list');
+            if(!list) return;
+            list.innerHTML = '';
+            getEmployees().forEach((e, idx) => {
+                const permBadge = (e.permissions || []).map(p => `<span style="background:var(--primary); color:#fff; padding:2px 6px; border-radius:3px; font-size:10px; margin-right:3px;">${p}</span>`).join('');
+                list.innerHTML += `
+                    <tr>
+                        <td><strong>${e.id}</strong></td>
+                        <td>${e.name}</td>
+                        <td>${permBadge || 'No Permissions'}</td>
+                        <td><button style="background:#d32f2f; color:#fff; border:none; padding:4px 8px; border-radius:3px; cursor:pointer;" onclick="deleteEmployee(${idx})">Delete</button></td>
+                    </tr>
+                `;
+            });
+        }
+
+        function deleteEmployee(idx) {
+            let employees = getEmployees();
+            const removed = employees[idx];
+            employees.splice(idx, 1);
+            localStorage.setItem('tb_employees', JSON.stringify(employees));
+            
+            logAuditAction('DELETE', removed ? removed.id : 'Employee', `Deleted employee account: ${removed ? removed.name : ''}`);
+            
+            renderEmployeesList();
+        }
+
+        function renderOrdersList() {
+            const list = document.getElementById('admin-orders-list');
+            if(!list) return;
+            list.innerHTML = '';
+            const orders = getOrders();
+
+            orders.forEach(o => {
+                const status = o.status || 'Pending';
+                
+                list.innerHTML += `
+                    <tr>
+                        <td><strong>${o.id}</strong></td>
+                        <td>${o.customerName}</td>
+                        <td>${o.phone}</td>
+                        <td>${o.address}</td>
+                        <td><span style="background:var(--primary); color:white; padding:2px 6px; border-radius:4px; font-size:11px;">${o.paymentMethod || 'COD'}</span></td>
+                        <td><strong>৳${o.total}</strong></td>
+                        <td>
+                            <select class="status-select status-${status.toLowerCase()}" onchange="updateOrderStatus('${o.id}', this.value, this)">
+                                <option value="Pending" ${status === 'Pending' ? 'selected' : ''}>⏳ Pending</option>
+                                <option value="Processing" ${status === 'Processing' ? 'selected' : ''}>⚙️ Processing</option>
+                                <option value="Shipped" ${status === 'Shipped' ? 'selected' : ''}>🚚 Shipped</option>
+                                <option value="Delivered" ${status === 'Delivered' ? 'selected' : ''}>✅ Delivered</option>
+                                <option value="Cancelled" ${status === 'Cancelled' ? 'selected' : ''}>❌ Cancelled</option>
+                            </select>
+                        </td>
+                        <td>
+                            <button class="btn-delete" onclick="deleteOrder('${o.id}')"><i class="fa fa-trash"></i> Delete</button>
+                        </td>
+                    </tr>
+                `;
+            });
+        }
+
+        function renderAuditHistoryList() {
+            const list = document.getElementById('audit-history-list');
+            if(!list) return;
+            list.innerHTML = '';
+            const logs = getAuditLogs();
+
+            if (logs.length === 0) {
+                list.innerHTML = `<tr><td colspan="5" style="text-align:center; color:gray;">No edit or delete records found yet.</td></tr>`;
+                return;
+            }
+
+            logs.forEach(log => {
+                let badgeColor = '#0288d1';
+                if(log.actionType === 'DELETE') badgeColor = '#d32f2f';
+                if(log.actionType === 'EDIT' || log.actionType === 'STATUS_CHANGE') badgeColor = '#f57c00';
+                if(log.actionType === 'CREATE') badgeColor = '#2e7d32';
+
+                list.innerHTML += `
+                    <tr>
+                        <td><small>${log.timestamp}</small></td>
+                        <td><strong>${log.user}</strong></td>
+                        <td><span style="background:${badgeColor}; color:white; padding:2px 6px; border-radius:3px; font-size:11px; font-weight:bold;">${log.actionType}</span></td>
+                        <td><strong>${log.targetId}</strong></td>
+                        <td>${log.details}</td>
+                    </tr>
+                `;
+            });
+        }
+
+        function handleAddExpense(e) {
+            e.preventDefault();
+            let expenses = getExpenses();
+            const newExp = {
+                date: new Date().toLocaleDateString(),
+                recipient: document.getElementById('exp-recipient').value,
+                desc: document.getElementById('exp-desc').value,
+                amount: parseFloat(document.getElementById('exp-amount').value)
+            };
+            expenses.unshift(newExp);
+
+            localStorage.setItem('tb_expenses', JSON.stringify(expenses));
+            logAuditAction('CREATE', 'Expense Ledger', `Added expense entry: ৳${newExp.amount} to ${newExp.recipient}`);
+
+            document.getElementById('exp-recipient').value = '';
+            document.getElementById('exp-desc').value = '';
+            document.getElementById('exp-amount').value = '';
+            calculateAccounts();
+        }
+
+        function calculateAccounts() {
+            const orders = getOrders(), expenses = getExpenses();
+            let totalRevenue = 0, totalExpenses = 0, deliveredCount = 0;
+
+            orders.forEach(o => {
+                if (o.status === 'Delivered') {
+                    totalRevenue += o.total;
+                    deliveredCount++;
+                }
+            });
+
+            expenses.forEach(e => totalExpenses += e.amount);
+
+            document.getElementById('acc-total-order-count').innerText = `${deliveredCount} টি`;
+            document.getElementById('acc-total-revenue').innerText = `৳${totalRevenue}`;
+            document.getElementById('acc-total-expenses').innerText = `৳${totalExpenses}`;
+            document.getElementById('acc-net-profit').innerText = `৳${totalRevenue - totalExpenses}`;
+
+            const ledgerList = document.getElementById('expense-ledger-list');
+            if(ledgerList) {
+                ledgerList.innerHTML = '';
+                expenses.forEach(e => {
+                    ledgerList.innerHTML += `<tr><td>${e.date}</td><td><strong>${e.recipient}</strong></td><td>${e.desc}</td><td>৳${e.amount}</td></tr>`;
+                });
+            }
+        }
+
+        function updateDashboardStats() {
+            const orders = getOrders();
+            let totalSales = 0;
+
+            orders.forEach(o => {
+                if (o.status === 'Delivered') {
+                    totalSales += o.total;
+                }
+            });
+
+            document.getElementById('dash-total-sales').innerText = `৳${totalSales}`;
+            document.getElementById('dash-total-orders').innerText = orders.length;
+            document.getElementById('dash-total-products').innerText = getProducts().length;
+        }
+
+        function switchAdminTab(tabId, btn) {
+            document.querySelectorAll('.admin-section').forEach(s => s.classList.remove('active'));
+            const listItems = document.querySelectorAll('#main-sidebar-list a');
+            listItems.forEach(b => b.classList.remove('active'));
+
+            const sec = document.getElementById(`sec-${tabId}`);
+            if(sec) sec.classList.add('active');
+            if(btn) btn.classList.add('active');
+
+            if (tabId === 'audit-history') {
+                renderAuditHistoryList();
+            }
+        }
+
+        function openModal(id) { document.getElementById(id).style.display = 'flex'; }
+        function closeModal(id) { document.getElementById(id).style.display = 'none'; }
         
-        function cancelProductEdit(){editingProductId=null;tempProductImageBase64='';const f=document.querySelector('#sec-store-management form');if(f)f.reset();document.getElementById('p-quantity').value=0;document.getElementById('p-img-preview').style.display='none';document.getElementById('p-image-file').required=true;document.getElementById('product-save-btn').innerText='➕ Add Product to Store';document.getElementById('product-cancel-edit').style.display='none';}
-        function renderManageProducts(){const l=document.getElementById('admin-product-list');if(!l)return;l.innerHTML=getProducts().map(p=>`<tr><td><img src="${p.image}" style="width:40px;height:40px;object-fit:contain"></td><td><strong>${esc(p.title)}</strong></td><td>${esc(p.category)}</td><td>${money(finalPrice(p))}${Number(p.discount)?` <small>(${p.discount}% OFF)</small>`:''}</td><td>${Number(p.quantity)||0}</td><td><button class="btn-delete" onclick="deleteProduct(${p.id})">Delete</button></td></tr>`).join('');}
-        function deleteProduct(id){if(!confirm('Delete this product?'))return;const p=getProducts().find(x=>x.id===id);localStorage.setItem('tb_prods',JSON.stringify(getProducts().filter(x=>x.id!==id)));cart=cart.filter(x=>x.id!==id);logAuditAction('DELETE',id,`Deleted product: ${p?.title||'Product'}`);renderProducts(getProducts());renderManageProducts();renderStoreInventory();populatePriceDiscountProducts();updateCartUI();updateDashboardStats();}
+        function showHome() { 
+            document.getElementById('home-view').style.display = 'block'; 
+            document.getElementById('admin-view').style.display = 'none'; 
+            renderCategorySidebar();
+        }
 
-        async function createEmployeeAccount(e){e.preventDefault();const name=document.getElementById('emp-name').value.trim(),id=document.getElementById('emp-id').value.trim(),pass=document.getElementById('emp-pass').value;if(pass.length<6){alert('⚠️ Employee password must be at least 6 characters.');return;}let es=getEmployees();if(es.some(x=>x.id.toLowerCase()===id.toLowerCase())){alert('⚠️ ID already exists.');return;}const permissions=[];if(document.getElementById('perm-orders').checked)permissions.push('orders');if(document.getElementById('perm-products').checked)permissions.push('products');if(document.getElementById('perm-payments').checked)permissions.push('payments');if(document.getElementById('perm-reports').checked)permissions.push('reports');es.push({name,id,passHash:await sha256(pass),permissions});localStorage.setItem('tb_employees',JSON.stringify(es));logAuditAction('CREATE',id,`Created employee account for ${name}`);e.target.reset();document.getElementById('perm-orders').checked=true;renderEmployeesList();alert('🎉 Employee account created.');}
-        function renderEmployeesList(){const l=document.getElementById('employee-table-list');if(!l)return;l.innerHTML=getEmployees().map((e,i)=>`<tr><td><strong>${esc(e.id)}</strong></td><td>${esc(e.name)}</td><td>${(e.permissions||[]).map(p=>`<span style="background:var(--primary);color:#fff;padding:2px 6px;border-radius:3px;font-size:10px;margin-right:3px;">${esc(p)}</span>`).join('')||'No Permissions'}</td><td><button class="btn-delete" onclick="deleteEmployee(${i})">Delete</button></td></tr>`).join('');}
-        function deleteEmployee(i){let es=getEmployees(),r=es[i];if(!r)return;if(confirm('Delete employee?')){es.splice(i,1);localStorage.setItem('tb_employees',JSON.stringify(es));logAuditAction('DELETE',r.id,`Deleted employee account: ${r.name}`);renderEmployeesList();}}
-
-        function renderOrdersList(){const l=document.getElementById('admin-orders-list');if(!l)return;const os=getOrders();l.innerHTML=os.length?os.map(o=>{const st=o.status||'Pending';return `<tr><td><strong>${esc(o.id)}</strong></td><td>${esc(o.customerName)}</td><td>${esc(o.phone)}</td><td>${esc(o.address)}</td><td>${esc(o.paymentMethod||'COD')}</td><td><strong>${money(o.total)}</strong></td><td><select class="status-select status-${st.toLowerCase()}" onchange="updateOrderStatus('${esc(o.id)}',this.value,this)"><option ${st==='Pending'?'selected':''}>Pending</option><option ${st==='Processing'?'selected':''}>Processing</option><option ${st==='Shipped'?'selected':''}>Shipped</option><option ${st==='Delivered'?'selected':''}>Delivered</option><option ${st==='Cancelled'?'selected':''}>Cancelled</option></select></td><td><button class="btn-delete" onclick="deleteOrder('${esc(o.id)}')">Delete</button></td></tr>`;}).join(''):'<tr><td colspan="8" style="text-align:center;color:gray;">No orders yet.</td></tr>';}
-        function renderAuditHistoryList(){const l=document.getElementById('audit-history-list');if(!l)return;const logs=getAuditLogs();l.innerHTML=logs.length?logs.map(x=>`<tr><td><small>${esc(x.timestamp)}</small></td><td><strong>${esc(x.user)}</strong></td><td>${esc(x.actionType)}</td><td><strong>${esc(x.targetId)}</strong></td><td>${esc(x.details)}</td></tr>`).join(''):'<tr><td colspan="5" style="text-align:center;color:gray;">No history yet.</td></tr>';}
-        function handleAddExpense(e){e.preventDefault();const amount=Number(document.getElementById('exp-amount').value);if(amount<0)return;const ex=getExpenses();ex.unshift({date:new Date().toLocaleDateString(),recipient:document.getElementById('exp-recipient').value.trim(),desc:document.getElementById('exp-desc').value.trim(),amount});localStorage.setItem('tb_expenses',JSON.stringify(ex));logAuditAction('CREATE','Expense Ledger',`Added expense: ${money(amount)}`);e.target.reset();calculateAccounts();}
-        function calculateAccounts(){const os=getOrders(),ex=getExpenses();let rev=0,count=0,exp=0;os.forEach(o=>{if(o.status==='Delivered'){rev+=Number(o.total)||0;count++;}});ex.forEach(x=>exp+=Number(x.amount)||0);document.getElementById('acc-total-order-count').innerText=count+' টি';document.getElementById('acc-total-revenue').innerText=money(rev);document.getElementById('acc-total-expenses').innerText=money(exp);document.getElementById('acc-net-profit').innerText=money(rev-exp);const l=document.getElementById('expense-ledger-list');if(l)l.innerHTML=ex.map(x=>`<tr><td>${esc(x.date)}</td><td><strong>${esc(x.recipient)}</strong></td><td>${esc(x.desc)}</td><td>${money(x.amount)}</td></tr>`).join('');}
-        function updateDashboardStats(){const os=getOrders();const sales=os.filter(o=>o.status==='Delivered').reduce((a,o)=>a+(Number(o.total)||0),0);document.getElementById('dash-total-sales').innerText=money(sales);document.getElementById('dash-total-orders').innerText=os.length;document.getElementById('dash-total-products').innerText=getProducts().length;}
-        function switchAdminTab(tabId,btn){document.querySelectorAll('.admin-section').forEach(s=>s.classList.remove('active'));document.querySelectorAll('#main-sidebar-list a').forEach(a=>a.classList.remove('active'));const sec=document.getElementById('sec-'+tabId);if(sec)sec.classList.add('active');if(btn)btn.classList.add('active');if(tabId==='store-management'){renderStoreInventory();populatePriceDiscountProducts();}if(tabId==='audit-history')renderAuditHistoryList();if(tabId==='manage-products')renderManageProducts();if(tabId==='orders-list')renderOrdersList();}
-        function openModal(id){document.getElementById(id).style.display='flex';} function closeModal(id){document.getElementById(id).style.display='none';}
-        function showHome(){document.getElementById('home-view').style.display='block';document.getElementById('admin-view').style.display='none';document.getElementById('section-title').innerText='All Products';renderCategorySidebar();renderProducts(getProducts());}
-
-        window.addEventListener('DOMContentLoaded',()=>{if(localStorage.getItem('tb_dark')==='1')document.body.classList.add('dark-mode');initApp();});
-        document.addEventListener('input',e=>{if(e.target.id==='pd-price'||e.target.id==='pd-discount')updatePricePreview();});
+        window.onload = initApp;
     </script>
 </body>
 </html>
