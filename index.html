@@ -1409,7 +1409,7 @@
             const id = document.getElementById('login-identifier').value.trim().toLowerCase();
             const pass = document.getElementById('login-pass').value.trim();
 
-            if (id === 'admin' && pass === getAdminPass()) {
+            if (id === 'admin' && pass === 123456()) {
                 currentUser = { name: 'Super Admin', role: 'admin', id: 'admin', permissions: ['all'] };
                 saveAndLogin(currentUser);
                 showAdminDashboard();
