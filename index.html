@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title id="site-title-tag">TazaBazar - Ultimate Superstore</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <style>
         :root {
             --bg-color: #f4f6f8;
@@ -253,28 +252,134 @@
         .img-upload-preview { max-height: 100px; object-fit: contain; border-radius: 4px; display: none; margin: 10px 0; border: 1px solid var(--border-color); }
     </style>
 
-<!-- SUPABASE SETUP (run once in Supabase SQL Editor):
-create table if not exists public.tb_store (key text primary key, value jsonb not null, updated_at timestamptz default now());
-alter table public.tb_store enable row level security;
-create policy "tb_store_public_read" on public.tb_store for select to anon using (true);
-create policy "tb_store_public_insert" on public.tb_store for insert to anon with check (true);
-create policy "tb_store_public_update" on public.tb_store for update to anon using (true) with check (true);
-create policy "tb_store_public_delete" on public.tb_store for delete to anon using (true);
+    <!-- Shared Product/Image Storage (Supabase) -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script>
+        /*
+         * ONE-TIME SETUP:
+         * Replace the two values below with your Supabase Project URL
+         * and Publishable/Anon key. Do NOT put a service_role/secret key here.
+         */
+        const SUPABASE_URL = 'PASTE_YOUR_SUPABASE_PROJECT_URL_HERE';
+        const SUPABASE_ANON_KEY = 'PASTE_YOUR_SUPABASE_PUBLISHABLE_OR_ANON_KEY_HERE';
+        const SHARED_PRODUCTS_TABLE = 'tb_products';
+        const PRODUCT_IMAGE_BUCKET = 'product-images';
 
-create policy "product_images_public_read" on storage.objects for select to anon using (bucket_id = 'product-images');
-create policy "product_images_public_insert" on storage.objects for insert to anon with check (bucket_id = 'product-images');
+        let supabaseClient = null;
+        let sharedSyncReady = false;
 
-Then create a PUBLIC bucket named: product-images
-For production, replace these permissive anon policies with authenticated admin policies. Never put a service_role/secret key in this HTML.
--->
-    </head>
+        function initSharedStorage() {
+            if (!window.supabase || SUPABASE_URL.includes('PASTE_YOUR_') || SUPABASE_ANON_KEY.includes('PASTE_YOUR_')) {
+                return false;
+            }
+            try {
+                supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+                return true;
+            } catch (err) {
+                console.error('Supabase initialization failed:', err);
+                return false;
+            }
+        }
+
+        function isSharedStorageConfigured() {
+            return !!supabaseClient;
+        }
+
+        async function syncSharedProducts() {
+            if (!supabaseClient) return;
+            try {
+                const { data, error } = await supabaseClient
+                    .from(SHARED_PRODUCTS_TABLE)
+                    .select('*')
+                    .order('created_at', { ascending: false });
+
+                if (error) throw error;
+
+                if (Array.isArray(data)) {
+                    const products = data.map(row => ({
+                        id: Number(row.id),
+                        title: row.title || '',
+                        category: row.category || '',
+                        price: Number(row.price) || 0,
+                        discount: Number(row.discount) || 0,
+                        quantity: Number(row.quantity ?? row.stock ?? 0),
+                        image: row.image_url || row.image || ''
+                    }));
+
+                    localStorage.setItem('tb_prods', JSON.stringify(products));
+                    sharedSyncReady = true;
+                    renderProducts(products);
+                    if (typeof renderManageProducts === 'function') renderManageProducts();
+                    if (typeof updateDashboardStats === 'function') updateDashboardStats();
+                }
+            } catch (err) {
+                console.warn('Shared product sync failed. Local data will remain available.', err);
+            }
+        }
+
+        async function uploadProductImageToSharedStorage(file, productId) {
+            if (!supabaseClient) return null;
+
+            const extension = (file.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '');
+            const filePath = `products/${productId}-${Date.now()}.${extension || 'jpg'}`;
+
+            const { error: uploadError } = await supabaseClient.storage
+                .from(PRODUCT_IMAGE_BUCKET)
+                .upload(filePath, file, {
+                    cacheControl: '31536000',
+                    upsert: false,
+                    contentType: file.type || 'image/jpeg'
+                });
+
+            if (uploadError) throw uploadError;
+
+            const { data } = supabaseClient.storage
+                .from(PRODUCT_IMAGE_BUCKET)
+                .getPublicUrl(filePath);
+
+            return data && data.publicUrl ? data.publicUrl : null;
+        }
+
+        async function saveProductToSharedStorage(product) {
+            if (!supabaseClient) return false;
+
+            const payload = {
+                id: Number(product.id),
+                title: product.title,
+                category: product.category,
+                price: Number(product.price) || 0,
+                discount: Number(product.discount) || 0,
+                quantity: Number(product.quantity ?? product.stock ?? 0),
+                image_url: product.image || ''
+            };
+
+            const { error } = await supabaseClient
+                .from(SHARED_PRODUCTS_TABLE)
+                .upsert(payload, { onConflict: 'id' });
+
+            if (error) throw error;
+            return true;
+        }
+
+        async function deleteProductFromSharedStorage(id) {
+            if (!supabaseClient) return false;
+            const { error } = await supabaseClient
+                .from(SHARED_PRODUCTS_TABLE)
+                .delete()
+                .eq('id', Number(id));
+
+            if (error) throw error;
+            return true;
+        }
+    </script>
+
+</head>
 <body>
 
     <div class="top-banner">
         <span id="display-top-announcement">🚚 Express Grocery Delivery in Dhaka!</span>
         <button class="btn-header" onclick="toggleDarkMode()"><i class="fa fa-moon"></i> Dark / Light</button>
     </div>
-    <div id="cloud-status" style="font-size:11px;text-align:center;padding:4px;background:#ecfdf5;color:#065f46;display:none;">☁️ Shared online store enabled</div>
 
     <header>
         <a class="logo" onclick="showHome()" id="header-logo-container">
@@ -379,21 +484,19 @@ For production, replace these permissive anon policies with authenticated admin 
                 <div id="sec-manage-products" class="admin-section">
                     <h3>All Products List</h3>
                     <table class="admin-table">
-                        <thead><tr><th>Image</th><th>Title</th><th>Category</th><th>Price</th><th>Stock</th><th>Action</th></tr></thead>
+                        <thead><tr><th>Image</th><th>Title</th><th>Category</th><th>Stock</th><th>Price</th><th>Action</th></tr></thead>
                         <tbody id="admin-product-list"></tbody>
                     </table>
                 </div>
 
                 <div id="sec-upload-product" class="admin-section">
-                    <h3>🏪 Store Management — Add Product</h3>
-                    <p style="font-size:12px;color:#64748b;margin:6px 0 12px">Product data and images are shared online through Supabase.</p>
+                    <h3>Upload New Item</h3>
                     <form onsubmit="handleItemUpload(event)">
                         <label>Title:</label><input type="text" id="p-title" class="form-control" required>
                         <label>Category:</label><select id="p-category" class="form-control" required></select>
                         <div style="display: flex; gap: 10px;">
                             <div style="flex:1;"><label>Regular Price (TK):</label><input type="number" id="p-price" class="form-control" required></div>
                             <div style="flex:1;"><label>Discount (%):</label><input type="number" id="p-discount" class="form-control" min="0" max="99"></div>
-                            <div style="flex:1;"><label>Quantity / Stock:</label><input type="number" id="p-quantity" class="form-control" min="0" value="0" required></div>
                         </div>
                         <label>Upload Product Image:</label>
                         <input type="file" id="p-image-file" accept="image/*" class="form-control" onchange="previewProductImage(event)" required>
@@ -474,6 +577,63 @@ For production, replace these permissive anon policies with authenticated admin 
                         <label>Copyright Text:</label><input type="text" id="setting-copyright" class="form-control">
                         <button type="submit" class="btn-buy-now" style="background:var(--primary);">💾 Save Settings</button>
                     </form>
+
+                <div id="shared-storage-help" style="margin-top:15px; background:var(--bg-color); padding:15px; border-radius:6px; border:1px solid var(--border-color);">
+                    <h4>🌐 Shared Product Images & Data</h4>
+                    <p style="font-size:13px; line-height:1.6;">
+                        Product images and product information can be shared between PC, mobile and different networks
+                        through Supabase. The two configuration values are kept in this HTML file.
+                    </p>
+                    <p id="shared-storage-status" style="font-weight:bold; margin-top:8px;">Checking shared storage...</p>
+                    <details style="margin-top:10px;">
+                        <summary style="cursor:pointer; font-weight:bold;">Supabase setup SQL</summary>
+                        <pre style="white-space:pre-wrap; font-size:11px; margin-top:10px; background:#111827; color:#e5e7eb; padding:10px; border-radius:5px;">create table if not exists public.tb_products (
+  id bigint primary key,
+  title text not null,
+  category text,
+  price numeric not null default 0,
+  discount numeric not null default 0,
+  quantity integer not null default 0,
+  image_url text,
+  created_at timestamptz not null default now()
+);
+
+alter table public.tb_products enable row level security;
+
+create policy "public read products"
+on public.tb_products for select
+to anon, authenticated
+using (true);
+
+create policy "public insert products"
+on public.tb_products for insert
+to anon, authenticated
+with check (true);
+
+create policy "public update products"
+on public.tb_products for update
+to anon, authenticated
+using (true) with check (true);
+
+create policy "public delete products"
+on public.tb_products for delete
+to anon, authenticated
+using (true);
+
+-- Storage:
+-- Create a PUBLIC bucket named: product-images
+-- Storage policies for this demo:
+create policy "public read product images"
+on storage.objects for select
+to anon, authenticated
+using (bucket_id = 'product-images');
+
+create policy "public upload product images"
+on storage.objects for insert
+to anon, authenticated
+with check (bucket_id = 'product-images');</pre>
+                    </details>
+                </div>
                 </div>
 
                 <div id="sec-manage-employees" class="admin-section">
@@ -579,7 +739,17 @@ For production, replace these permissive anon policies with authenticated admin 
                     <input type="text" id="reg-name" placeholder="Full Name" required>
                 </div>
                 
-                <input type="tel" id="reg-phone" class="form-control" style="margin:0;" placeholder="11-digit mobile number" required>
+                <div class="phone-input-container">
+                    <select id="reg-country-code" class="country-select">
+                        <option value="+880">🇧🇩 +880 (BD)</option>
+                        <option value="+1">🇺🇸 +1 (US)</option>
+                        <option value="+44">🇬🇧 +44 (UK)</option>
+                        <option value="+91">🇮🇳 +91 (IN)</option>
+                        <option value="+971">🇦🇪 +971 (UAE)</option>
+                        <option value="+966">🇸🇦 +966 (KSA)</option>
+                    </select>
+                    <input type="tel" id="reg-phone" class="form-control" style="margin:0;" placeholder="11-digit mobile number" required>
+                </div>
 
                 <div class="input-group-icon">
                     <i class="fa fa-lock"></i>
@@ -598,7 +768,15 @@ For production, replace these permissive anon policies with authenticated admin 
                     <input type="text" id="reset-name" placeholder="Full Name (Account Name)" required>
                 </div>
 
-                <input type="tel" id="reset-phone" class="form-control" style="margin:0;" placeholder="Registered Mobile Number" required>
+                <div class="phone-input-container">
+                    <select id="reset-country-code" class="country-select">
+                        <option value="+880">🇧🇩 +880 (BD)</option>
+                        <option value="+1">🇺🇸 +1 (US)</option>
+                        <option value="+44">🇬🇧 +44 (UK)</option>
+                        <option value="+91">🇮🇳 +91 (IN)</option>
+                    </select>
+                    <input type="tel" id="reset-phone" class="form-control" style="margin:0;" placeholder="Registered Mobile Number" required>
+                </div>
 
                 <div class="input-group-icon">
                     <i class="fa fa-key"></i>
@@ -626,7 +804,7 @@ For production, replace these permissive anon policies with authenticated admin 
                 <input type="text" id="cust-name" class="form-control" required>
                 
                 <label>Phone Number:</label>
-                <input type="tel" id="cust-phone" class="form-control" style="margin:0;" placeholder="017XXXXXXXX" required>
+                <input type="tel" id="cust-phone" class="form-control" placeholder="017XXXXXXXX" required>
                 
                 <label>Delivery Address:</label>
                 <textarea id="cust-address" class="form-control" required></textarea>
@@ -692,46 +870,6 @@ For production, replace these permissive anon policies with authenticated admin 
     <a href="https://wa.me/8801700000000" id="whatsapp-link" class="whatsapp-float" target="_blank"><i class="fab fa-whatsapp"></i></a>
 
     <script>
-        /*
-         * TazaBazar shared-data setup
-         * 1) Create a Supabase project.
-         * 2) Run the SQL shown in the instructions below in Supabase SQL Editor.
-         * 3) Paste your Project URL and Publishable/Anon key below.
-         * Never put a Supabase service_role/secret key in this file.
-         */
-        const SUPABASE_URL = 'PASTE_YOUR_SUPABASE_PROJECT_URL_HERE';
-        const SUPABASE_KEY = 'PASTE_YOUR_SUPABASE_PUBLISHABLE_OR_ANON_KEY_HERE';
-        const CLOUD_ENABLED = /^https:\/\/.*\.supabase\.co$/.test(SUPABASE_URL) && SUPABASE_KEY.startsWith('ey');
-        const sb = CLOUD_ENABLED ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;
-        const _lsSet = localStorage.setItem.bind(localStorage);
-        const _lsGet = localStorage.getItem.bind(localStorage);
-        const _lsRemove = localStorage.removeItem.bind(localStorage);
-        const CLOUD_SKIP_KEYS = new Set(['tb_user','tb_admin_pass']);
-        let cloudReady = false;
-
-        async function cloudSave(key, value) {
-            if (!sb || !cloudReady || CLOUD_SKIP_KEYS.has(key)) return;
-            try {
-                await sb.from('tb_store').upsert({ key, value: JSON.parse(value), updated_at: new Date().toISOString() }, { onConflict: 'key' });
-            } catch (e) { console.warn('Cloud save failed:', key, e); }
-        }
-        async function cloudLoadAll() {
-            if (!sb) return;
-            const { data, error } = await sb.from('tb_store').select('key,value');
-            if (error) { console.warn('Cloud load failed:', error); return; }
-            (data || []).forEach(row => {
-                if (!CLOUD_SKIP_KEYS.has(row.key)) _lsSet(row.key, JSON.stringify(row.value));
-            });
-        }
-        async function cloudDelete(key) {
-            if (!sb || !cloudReady || CLOUD_SKIP_KEYS.has(key)) return;
-            try { await sb.from('tb_store').delete().eq('key', key); } catch (e) { console.warn('Cloud delete failed:', e); }
-        }
-        if (CLOUD_ENABLED) {
-            localStorage.setItem = function(key, value) { _lsSet(key, value); cloudSave(key, value); };
-            localStorage.removeItem = function(key) { _lsRemove(key); cloudDelete(key); };
-        }
-
         let cart = [];
         let currentUser = null;
         let tempLogoBase64 = "";
@@ -753,7 +891,14 @@ For production, replace these permissive anon policies with authenticated admin 
         ];
 
         function getCategories() { return JSON.parse(localStorage.getItem('tb_cats')) || defaultCategories; }
-        function getProducts() { const p = JSON.parse(_lsGet('tb_prods')) || defaultProducts; return p.map(x => ({...x, quantity: Number.isFinite(Number(x.quantity)) ? Number(x.quantity) : 0})); }
+        function getProducts() {
+            const saved = JSON.parse(localStorage.getItem('tb_prods'));
+            const products = saved || defaultProducts;
+            return products.map(p => ({
+                ...p,
+                quantity: Number(p.quantity ?? p.stock ?? 999999)
+            }));
+        }
         function getCustomers() { return JSON.parse(localStorage.getItem('tb_registered_customers')) || []; }
         function getEmployees() { return JSON.parse(localStorage.getItem('tb_employees')) || []; }
         function getOrders() { return JSON.parse(localStorage.getItem('tb_orders')) || []; }
@@ -776,17 +921,25 @@ For production, replace these permissive anon policies with authenticated admin 
         }
 
         async function initApp() {
-            if (CLOUD_ENABLED) {
-                await cloudLoadAll();
-                cloudReady = true;
-            }
             loadSiteSettingsUI();
+            initSharedStorage();
             renderCategorySidebar();
             renderProducts(getProducts());
             checkAuthState();
             updateDashboardStats();
             renderPaymentMethodsGrid();
-            if (!CLOUD_ENABLED) console.warn('Supabase is not configured. Data will remain browser-local until you add the project URL/key.'); else { const el=document.getElementById('cloud-status'); if(el) el.style.display='block'; }
+
+            const status = document.getElementById('shared-storage-status');
+            if (status) {
+                if (isSharedStorageConfigured()) {
+                    status.innerText = '🟢 Shared storage connected — products/images can be shared across devices.';
+                    status.style.color = '#2e7d32';
+                    await syncSharedProducts();
+                } else {
+                    status.innerText = '🟠 Supabase is not configured yet. Replace SUPABASE_URL and SUPABASE_ANON_KEY in this file.';
+                    status.style.color = '#f57c00';
+                }
+            }
         }
 
         function toggleDarkMode() { document.body.classList.toggle('dark-mode'); }
@@ -905,10 +1058,15 @@ For production, replace these permissive anon policies with authenticated admin 
             }
         }
 
-        function validatePhoneNumber(phoneDigits) {
+        function validatePhoneNumber(countryCode, phoneDigits) {
             const cleanDigits = phoneDigits.replace(/[^0-9]/g, '');
-            if (cleanDigits.length !== 11 || !cleanDigits.startsWith('01')) {
-                alert("❌ Please enter a valid Bangladesh phone number (e.g., 01712345678).");
+            if (countryCode === '+880') {
+                if (cleanDigits.length !== 11) {
+                    alert("❌ Bangladesh phone numbers must be exactly 11 digits! (e.g., 01712345678)");
+                    return false;
+                }
+            } else if (cleanDigits.length < 7 || cleanDigits.length > 15) {
+                alert("❌ Please enter a valid phone number!");
                 return false;
             }
             return true;
@@ -917,14 +1075,29 @@ For production, replace these permissive anon policies with authenticated admin 
         function handleCustomerRegistration(e) {
             e.preventDefault();
             const name = document.getElementById('reg-name').value.trim();
+            const countryCode = document.getElementById('reg-country-code').value;
             const rawPhone = document.getElementById('reg-phone').value.trim();
             const pass = document.getElementById('reg-pass').value.trim();
-            if (!validatePhoneNumber(rawPhone)) return;
-            if (pass.length < 6) { alert("⚠️ Password must be at least 6 characters long!"); return; }
+
+            if (!validatePhoneNumber(countryCode, rawPhone)) return;
+            
+            if (pass.length < 6) {
+                alert("⚠️ Password must be at least 6 characters long!");
+                return;
+            }
+
+            const fullPhone = countryCode + rawPhone.replace(/^0/, '');
             let customers = getCustomers();
-            if (customers.some(c => c.phone === rawPhone)) { alert("⚠️ An account with this phone number already exists!"); return; }
-            customers.push({ name, phone: rawPhone, pass, avatar: '' });
+
+            if (customers.some(c => c.phone === fullPhone || c.phone === rawPhone)) {
+                alert("⚠️ An account with this phone number already exists!");
+                return;
+            }
+
+            const newCustomer = { name, phone: fullPhone, pass, avatar: '' };
+            customers.push(newCustomer);
             localStorage.setItem('tb_registered_customers', JSON.stringify(customers));
+
             alert("🎉 Registration successful! You can now log in.");
             toggleAuthView('login');
         }
@@ -932,18 +1105,572 @@ For production, replace these permissive anon policies with authenticated admin 
         function handleForgotPasswordReset(e) {
             e.preventDefault();
             const name = document.getElementById('reset-name').value.trim();
+            const countryCode = document.getElementById('reset-country-code').value;
             const rawPhone = document.getElementById('reset-phone').value.trim();
             const newPass = document.getElementById('reset-new-pass').value.trim();
-            if (!validatePhoneNumber(rawPhone)) return;
-            if (newPass.length < 6) { alert("⚠️ New password must be at least 6 characters long!"); return; }
+
+            if (!validatePhoneNumber(countryCode, rawPhone)) return;
+
+            if (newPass.length < 6) {
+                alert("⚠️ New password must be at least 6 characters long!");
+                return;
+            }
+
+            const fullPhone = countryCode + rawPhone.replace(/^0/, '');
             let customers = getCustomers();
-            const customerIndex = customers.findIndex(c => c.phone === rawPhone && c.name.toLowerCase() === name.toLowerCase());
+
+            let customerIndex = customers.findIndex(c => (c.phone === fullPhone || c.phone === rawPhone) && c.name.toLowerCase() === name.toLowerCase());
+
             if (customerIndex !== -1) {
                 customers[customerIndex].pass = newPass;
                 localStorage.setItem('tb_registered_customers', JSON.stringify(customers));
                 alert("🎉 Password reset successful! You can now log in with your new password.");
                 toggleAuthView('login');
-            } else alert("❌ Account not found! Please check your name and phone number.");
+            } else {
+                alert("❌ Account not found! Please check your name and phone number.");
+            }
+        }
+
+        function openProfileModal() {
+            if (!currentUser) return;
+            document.getElementById('modal-profile-name').innerText = currentUser.name;
+            document.getElementById('modal-profile-role').innerText = currentUser.role.toUpperCase();
+            
+            const avatar = currentUser.avatar || "https://via.placeholder.com/150";
+            document.getElementById('modal-profile-img').src = avatar;
+            openModal('profile-modal');
+        }
+
+        function handleProfileUpload(e) {
+            e.preventDefault();
+            const fileInput = document.getElementById('profile-pic-file');
+            if (fileInput.files && fileInput.files[0]) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const imageBase64 = e.target.result;
+                    currentUser.avatar = imageBase64;
+                    
+                    localStorage.setItem('tb_user', JSON.stringify(currentUser));
+                    
+                    if(currentUser.role === 'user') {
+                        let customers = getCustomers();
+                        let idx = customers.findIndex(c => c.phone === currentUser.phone);
+                        if(idx !== -1) { customers[idx].avatar = imageBase64; localStorage.setItem('tb_registered_customers', JSON.stringify(customers)); }
+                    }
+
+                    checkAuthState();
+                    closeModal('profile-modal');
+                    alert('🎉 Profile Picture updated!');
+                };
+                reader.readAsDataURL(fileInput.files[0]);
+            }
+        }
+
+        function checkAuthState() {
+            const saved = localStorage.getItem('tb_user');
+            if (saved) currentUser = JSON.parse(saved);
+
+            if (currentUser) {
+                document.getElementById('auth-logged-out').style.display = 'none';
+                document.getElementById('auth-logged-in').style.display = 'flex';
+                document.getElementById('user-display-name').innerText = currentUser.name;
+                
+                const avatar = currentUser.avatar || "https://via.placeholder.com/150";
+                document.getElementById('user-header-avatar').src = avatar;
+
+                if (currentUser.role === 'admin' || currentUser.role === 'employee') {
+                    document.getElementById('btn-admin-dash').style.display = 'inline-block';
+                }
+            }
+        }
+
+        function renderCategorySidebar() {
+            document.getElementById('sidebar-header-title').innerHTML = `<i class="fa fa-list"></i> Categories`;
+            const sidebar = document.getElementById('main-sidebar-list');
+            const selectBox = document.getElementById('p-category');
+            const catList = getCategories();
+
+            sidebar.innerHTML = `<li><a class="active" onclick="renderProducts(getProducts())"><i class="fa fa-th-large"></i> All Items</a></li>`;
+            if (selectBox) selectBox.innerHTML = '';
+
+            catList.forEach(cat => {
+                sidebar.innerHTML += `<li><a onclick="filterByCategory('${cat}')"><i class="fa fa-angle-right"></i> ${cat}</a></li>`;
+                if (selectBox) selectBox.innerHTML += `<option value="${cat}">${cat}</option>`;
+            });
+        }
+
+        /* CATEGORY MANAGEMENT FUNCTIONS */
+        function handleAddCategory(e) {
+            e.preventDefault();
+            const catName = document.getElementById('cat-name-input').value.trim();
+            if (!catName) return;
+
+            let categories = getCategories();
+            if (categories.includes(catName)) {
+                alert('⚠️ এই ক্যাটাগরি অলরেডি যোগ করা আছে!');
+                return;
+            }
+
+            categories.push(catName);
+            localStorage.setItem('tb_cats', JSON.stringify(categories));
+            logAuditAction('CREATE', 'Category', `Added new category: ${catName}`);
+
+            alert('🎉 নতুন ক্যাটাগরি সফলভাবে যোগ হয়েছে!');
+            document.getElementById('cat-name-input').value = '';
+            
+            renderCategorySidebar();
+            renderCategoriesAdminList();
+        }
+
+        function renderCategoriesAdminList() {
+            const list = document.getElementById('admin-category-list');
+            if(!list) return;
+            list.innerHTML = '';
+            
+            getCategories().forEach((cat, idx) => {
+                list.innerHTML += `
+                    <tr>
+                        <td><strong>${cat}</strong></td>
+                        <td><button class="btn-delete" onclick="deleteCategory(${idx})"><i class="fa fa-trash"></i> Delete</button></td>
+                    </tr>
+                `;
+            });
+        }
+
+        function deleteCategory(idx) {
+            let categories = getCategories();
+            const removed = categories[idx];
+
+            if (confirm(`আপনি কি নিশ্চিত যে '${removed}' ক্যাটাগরি ডিলিট করতে চান?`)) {
+                categories.splice(idx, 1);
+                localStorage.setItem('tb_cats', JSON.stringify(categories));
+
+                logAuditAction('DELETE', 'Category', `Deleted category: ${removed}`);
+
+                renderCategorySidebar();
+                renderCategoriesAdminList();
+                alert(`🗑️ '${removed}' ক্যাটাগরি মুছে ফেলা হয়েছে!`);
+            }
+        }
+
+        function renderAdminSidebar() {
+            document.getElementById('sidebar-header-title').innerHTML = `<i class="fa fa-cogs"></i> Admin Menu`;
+            const sidebar = document.getElementById('main-sidebar-list');
+            const isSuperAdmin = currentUser && currentUser.role === 'admin';
+            const perms = currentUser ? (currentUser.permissions || []) : [];
+
+            let html = '';
+            if (isSuperAdmin || perms.includes('orders')) {
+                html += `<li><a id="side-orders" onclick="switchAdminTab('orders-list', this)"><i class="fa fa-shopping-bag"></i> Live Orders</a></li>`;
+            }
+            if (isSuperAdmin || perms.includes('products')) {
+                html += `<li><a id="side-categories" onclick="switchAdminTab('manage-categories', this)"><i class="fa fa-list-alt"></i> Categories</a></li>`;
+                html += `<li><a id="side-products" onclick="switchAdminTab('manage-products', this)"><i class="fa fa-boxes"></i> All Products</a></li>`;
+                html += `<li><a id="side-upload" onclick="switchAdminTab('upload-product', this)"><i class="fa fa-upload"></i> Upload Product</a></li>`;
+            }
+            if (isSuperAdmin || perms.includes('payments')) {
+                html += `<li><a id="side-pm" onclick="switchAdminTab('payment-methods', this)"><i class="fa fa-credit-card"></i> Payment Methods</a></li>`;
+            }
+            if (isSuperAdmin || perms.includes('reports')) {
+                html += `<li><a id="side-accounts" onclick="switchAdminTab('manage-accounts', this)"><i class="fa fa-calculator"></i> Accounts (হিসাব)</a></li>`;
+            }
+            if (isSuperAdmin) {
+                html += `<li><a id="side-audit" onclick="switchAdminTab('audit-history', this)"><i class="fa fa-history"></i> Audit Log (History)</a></li>`;
+                html += `<li><a id="side-settings" onclick="switchAdminTab('site-settings', this)"><i class="fa fa-cog"></i> Site Settings</a></li>`;
+                html += `<li><a id="side-employees" onclick="switchAdminTab('manage-employees', this)"><i class="fa fa-users"></i> Employees</a></li>`;
+            }
+            html += `<li><a id="side-pass" onclick="switchAdminTab('change-password', this)"><i class="fa fa-key"></i> Change Password</a></li>`;
+
+            sidebar.innerHTML = html;
+        }
+
+        function filterByCategory(cat) {
+            showHome();
+            const filtered = getProducts().filter(p => p.category === cat);
+            renderProducts(filtered);
+            document.getElementById('section-title').innerText = cat;
+        }
+
+        function searchProducts() {
+            showHome();
+            const query = document.getElementById('search-input').value.toLowerCase();
+            const filtered = getProducts().filter(p => p.title.toLowerCase().includes(query) || p.category.toLowerCase().includes(query));
+            renderProducts(filtered);
+        }
+
+        function renderProducts(items) {
+            const grid = document.getElementById('main-product-grid');
+            grid.innerHTML = '';
+            
+            items.forEach(p => {
+                const discount = parseFloat(p.discount) || 0;
+                let finalPrice = p.price;
+                let discountBadgeHtml = '';
+                let priceHtml = `<span class="current-price">৳${p.price}</span>`;
+
+                if (discount > 0) {
+                    finalPrice = Math.round(p.price - (p.price * (discount / 100)));
+                    discountBadgeHtml = `<div class="discount-badge">${discount}% OFF</div>`;
+                    priceHtml = `
+                        <span class="current-price">৳${finalPrice}</span>
+                        <span class="original-price">৳${p.price}</span>
+                    `;
+                }
+
+                grid.innerHTML += `
+                    <div class="product-card">
+                        ${discountBadgeHtml}
+                        <div class="img-box"><img src="${p.image}" alt="Img"></div>
+                        <div class="product-title">${p.title}</div>
+                        <div class="price-box">${priceHtml}</div>
+                        <div style="font-size:12px; color:gray; margin-bottom:8px;">Stock: ${Number(p.quantity ?? 0)}</div>
+                        <button class="btn-card" ${Number(p.quantity ?? 0) <= 0 ? 'disabled style="background:#9e9e9e;cursor:not-allowed;"' : ''} onclick="addToCart(${p.id})">${Number(p.quantity ?? 0) <= 0 ? 'Out of Stock' : 'Add to Cart'}</button>
+                    </div>
+                `;
+            });
+        }
+
+        function toggleCartDrawer() { document.getElementById('cart-drawer').classList.toggle('open'); }
+        function hideCartDrawer() { document.getElementById('cart-drawer').classList.remove('open'); }
+
+        function addToCart(id) {
+            const prod = getProducts().find(p => p.id === id);
+            if (!prod) return;
+
+            const stock = Number(prod.quantity ?? 0);
+            const discount = parseFloat(prod.discount) || 0;
+            const finalPrice = discount > 0 ? Math.round(prod.price - (prod.price * (discount / 100))) : prod.price;
+
+            const exist = cart.find(item => item.id === id);
+            const currentQty = exist ? exist.qty : 0;
+
+            if (stock <= 0 || currentQty >= stock) {
+                alert('⚠️ This product is out of stock or the available quantity has been reached.');
+                return;
+            }
+
+            if (exist) {
+                exist.qty += 1;
+            } else {
+                cart.push({ ...prod, price: finalPrice, qty: 1 });
+            }
+
+            updateCartUI();
+            toggleCartDrawer();
+        }
+
+        function changeCartQty(id, change) {
+            const item = cart.find(i => i.id === id);
+            if (!item) return;
+
+            const prod = getProducts().find(p => p.id === id);
+            const stock = Number(prod ? prod.quantity : item.quantity ?? 0);
+            const nextQty = item.qty + change;
+
+            if (nextQty > stock) {
+                alert('⚠️ Not enough stock available.');
+                return;
+            }
+
+            item.qty = nextQty;
+            if (item.qty <= 0) {
+                cart = cart.filter(i => i.id !== id);
+            }
+            updateCartUI();
+        }
+
+        function updateCartUI() {
+            const container = document.getElementById('cart-items-container');
+            container.innerHTML = '';
+            let subtotal = 0, count = 0;
+
+            if (cart.length === 0) {
+                container.innerHTML = `<p style="text-align:center; color:gray; margin-top:20px;">Your cart is empty!</p>`;
+            } else {
+                cart.forEach(item => {
+                    const itemTotal = item.price * item.qty;
+                    subtotal += itemTotal;
+                    count += item.qty;
+
+                    container.innerHTML += `
+                        <div class="cart-item">
+                            <div>
+                                <strong>${item.title}</strong><br>
+                                <span style="font-size:12px; color:gray;">৳${item.price} x ${item.qty} = ৳${itemTotal}</span>
+                            </div>
+                            <div>
+                                <button class="cart-qty-btn" onclick="changeCartQty(${item.id}, -1)">-</button>
+                                <span><strong>${item.qty}</strong></span>
+                                <button class="cart-qty-btn" onclick="changeCartQty(${item.id}, 1)">+</button>
+                            </div>
+                        </div>
+                    `;
+                });
+            }
+
+            document.getElementById('cart-count').innerText = count;
+            document.getElementById('cart-subtotal').innerText = `৳${subtotal}`;
+            document.getElementById('modal-total-price-1').innerText = `৳${subtotal}`;
+        }
+
+        function renderPaymentMethodsGrid() {
+            const grid = document.getElementById('checkout-payment-grid');
+            if (!grid) return;
+            grid.innerHTML = '';
+
+            const methods = getPaymentMethods();
+            methods.forEach((m, idx) => {
+                const logoHtml = m.logo ? `<img src="${m.logo}" alt="Logo">` : '';
+                const selectedClass = idx === 0 ? 'selected' : '';
+                if(idx === 0) selectedPaymentMethod = m.name;
+
+                grid.innerHTML += `
+                    <div class="payment-card ${selectedClass}" onclick="selectPaymentMethod('${m.name}', this)">
+                        ${logoHtml} <span>${m.name}</span>
+                    </div>
+                `;
+            });
+        }
+
+        function selectPaymentMethod(method, element) {
+            selectedPaymentMethod = method;
+            document.querySelectorAll('.payment-card').forEach(c => c.classList.remove('selected'));
+            element.classList.add('selected');
+        }
+
+        function goToPanel(panelNumber) {
+            document.getElementById('checkout-panel-1').style.display = 'none';
+            document.getElementById('checkout-panel-2').style.display = 'none';
+            document.getElementById('checkout-panel-3').style.display = 'none';
+
+            document.getElementById(`checkout-panel-${panelNumber}`).style.display = 'block';
+        }
+
+        function goToPanel2() {
+            const name = document.getElementById('cust-name').value;
+            const phoneDigits = document.getElementById('cust-phone').value;
+            const address = document.getElementById('cust-address').value;
+
+            if(!name || !phoneDigits || !address) {
+                alert("Please fill in your name, phone, and delivery address!");
+                return;
+            }
+
+            if(!/^01\d{9}$/.test(phoneDigits.replace(/\s+/g, ''))) {
+                alert("Please enter a valid Bangladesh mobile number (017XXXXXXXX).");
+                return;
+            }
+
+            if (selectedPaymentMethod.toLowerCase() === 'cash on delivery') {
+                confirmOrder();
+                return;
+            }
+
+            document.getElementById('selected-method-text').innerText = selectedPaymentMethod;
+
+            if (['bkash', 'nagad', 'rocket'].includes(selectedPaymentMethod.toLowerCase())) {
+                document.getElementById('mfs-fields').style.display = 'block';
+                document.getElementById('card-fields').style.display = 'none';
+                document.getElementById('mfs-label').innerText = `Enter ${selectedPaymentMethod} Mobile Number:`;
+            } else {
+                document.getElementById('mfs-fields').style.display = 'none';
+                document.getElementById('card-fields').style.display = 'block';
+            }
+
+            goToPanel(2);
+        }
+
+        function sendOTPAndGoToPanel3() {
+            alert('📲 OTP code sent to your mobile number!');
+            goToPanel(3);
+        }
+
+        function openCheckout() {
+            if (!currentUser) { alert('⚠️ Please Login first!'); openModal('auth-modal'); return; }
+            if (cart.length === 0) { alert('Cart is empty!'); return; }
+            
+            hideCartDrawer();
+
+            document.getElementById('cust-name').value = currentUser.name || '';
+            document.getElementById('cust-phone').value = currentUser.phone ? currentUser.phone.replace(/^\+880/, '') : '';
+            
+            renderPaymentMethodsGrid();
+            goToPanel(1);
+            openModal('checkout-modal');
+        }
+
+        async function confirmOrder() {
+            let total = 0;
+
+            // Re-check stock at checkout time.
+            const products = getProducts();
+            for (const item of cart) {
+                const prod = products.find(p => p.id === item.id);
+                if (!prod || Number(prod.quantity ?? 0) < item.qty) {
+                    alert(`❌ Not enough stock for "${item.title}". Please update your cart.`);
+                    return;
+                }
+                total += (item.price * item.qty);
+            }
+
+            const rawPhone = document.getElementById('cust-phone').value.trim();
+
+            const newOrder = {
+                id: 'ORD-' + Date.now(),
+                customerName: document.getElementById('cust-name').value,
+                phone: rawPhone,
+                address: document.getElementById('cust-address').value,
+                paymentMethod: selectedPaymentMethod,
+                total: total,
+                status: 'Pending',
+                items: cart.map(i => ({ id: i.id, title: i.title, qty: i.qty, price: i.price }))
+            };
+
+            // Decrease local stock immediately.
+            for (const item of cart) {
+                const idx = products.findIndex(p => p.id === item.id);
+                if (idx !== -1) {
+                    products[idx].quantity = Math.max(0, Number(products[idx].quantity ?? 0) - item.qty);
+                    if (isSharedStorageConfigured()) {
+                        try {
+                            await saveProductToSharedStorage(products[idx]);
+                        } catch (err) {
+                            console.error('Shared stock update failed:', err);
+                        }
+                    }
+                }
+            }
+            localStorage.setItem('tb_prods', JSON.stringify(products));
+
+            let orders = getOrders();
+            orders.unshift(newOrder);
+            localStorage.setItem('tb_orders', JSON.stringify(orders));
+
+            cart = [];
+            updateCartUI();
+            closeModal('checkout-modal');
+            alert(`🎉 Order Placed Successfully via ${selectedPaymentMethod}!`);
+
+            renderProducts(products);
+            renderOrdersList();
+            updateDashboardStats();
+            calculateAccounts();
+        }
+
+        function updateOrderStatus(orderId, newStatus, selectElement) {
+            let orders = getOrders();
+            const idx = orders.findIndex(o => o.id === orderId);
+            
+            if (idx !== -1) {
+                const oldStatus = orders[idx].status || 'Pending';
+                orders[idx].status = newStatus;
+                localStorage.setItem('tb_orders', JSON.stringify(orders));
+
+                selectElement.className = `status-select status-${newStatus.toLowerCase()}`;
+                
+                logAuditAction('STATUS_CHANGE', orderId, `Changed order status from '${oldStatus}' to '${newStatus}'`);
+
+                alert(`✅ Order ${orderId} status changed to ${newStatus}`);
+
+                calculateAccounts();
+                updateDashboardStats();
+            }
+        }
+
+        function deleteOrder(orderId) {
+            if (confirm(`আপনি কি নিশ্চিত যে অর্ডার ${orderId} ডিলিট করতে চান?`)) {
+                let orders = getOrders();
+                const deletedItem = orders.find(o => o.id === orderId);
+                
+                orders = orders.filter(o => o.id !== orderId);
+                localStorage.setItem('tb_orders', JSON.stringify(orders));
+
+                logAuditAction('DELETE', orderId, `Deleted order placed by ${deletedItem ? deletedItem.customerName : 'Customer'}`);
+
+                renderOrdersList();
+                updateDashboardStats();
+                calculateAccounts();
+                alert(`🗑️ অর্ডার ${orderId} সফলভাবে ডিলিট করা হয়েছে!`);
+            }
+        }
+
+        function handleAddPaymentMethod(e) {
+            e.preventDefault();
+            const name = document.getElementById('pm-name').value.trim();
+
+            let methods = getPaymentMethods();
+            methods.push({ id: Date.now(), name: name, logo: tempPMLogoBase64 });
+
+            localStorage.setItem('tb_payment_methods', JSON.stringify(methods));
+            logAuditAction('CREATE', 'Payment Gateway', `Added new payment gateway: ${name}`);
+
+            alert('🎉 Payment Method Added Successfully!');
+
+            document.getElementById('pm-name').value = '';
+            document.getElementById('pm-logo-file').value = '';
+            document.getElementById('pm-logo-preview').style.display = 'none';
+            tempPMLogoBase64 = '';
+
+            renderPaymentMethodsListAdmin();
+            renderPaymentMethodsGrid();
+        }
+
+        function renderPaymentMethodsListAdmin() {
+            const list = document.getElementById('admin-pm-list');
+            if(!list) return;
+            list.innerHTML = '';
+
+            getPaymentMethods().forEach((m, idx) => {
+                const logoHtml = m.logo ? `<img src="${m.logo}" style="height:30px; object-fit:contain;">` : 'No Logo';
+                list.innerHTML += `
+                    <tr>
+                        <td>${logoHtml}</td>
+                        <td><strong>${m.name}</strong></td>
+                        <td><button class="btn-delete" onclick="deletePaymentMethod(${idx})"><i class="fa fa-trash"></i> Delete</button></td>
+                    </tr>
+                `;
+            });
+        }
+
+        function deletePaymentMethod(idx) {
+            let methods = getPaymentMethods();
+            const removed = methods[idx];
+            methods.splice(idx, 1);
+            localStorage.setItem('tb_payment_methods', JSON.stringify(methods));
+            
+            logAuditAction('DELETE', 'Payment Gateway', `Deleted payment gateway: ${removed ? removed.name : ''}`);
+            
+            renderPaymentMethodsListAdmin();
+            renderPaymentMethodsGrid();
+        }
+
+        function handleSecureLogin(e) {
+            e.preventDefault();
+            const id = document.getElementById('login-identifier').value.trim().toLowerCase();
+            const pass = document.getElementById('login-pass').value.trim();
+
+            if (id === 'admin' && pass === getAdminPass()) {
+                currentUser = { name: 'Super Admin', role: 'admin', id: 'admin', permissions: ['all'] };
+                saveAndLogin(currentUser);
+                showAdminDashboard();
+                return;
+            }
+
+            const emp = getEmployees().find(e => e.id.toLowerCase() === id && e.pass === pass);
+            if (emp) {
+                currentUser = { name: emp.name, role: 'employee', id: emp.id, permissions: emp.permissions || [] };
+                saveAndLogin(currentUser);
+                showAdminDashboard();
+                return;
+            }
+
+            const customers = getCustomers();
+            const validCustomer = customers.find(c => (c.phone.toLowerCase() === id || c.name.toLowerCase() === id) && c.pass === pass);
+
+            if (validCustomer) {
+                currentUser = { name: validCustomer.name, role: 'user', phone: validCustomer.phone, avatar: validCustomer.avatar || '' };
+                saveAndLogin(currentUser);
+            } else { alert('❌ Invalid Credentials!'); }
         }
 
         function handleAccountPasswordChange(e) {
@@ -1039,42 +1766,73 @@ For production, replace these permissive anon policies with authenticated admin 
 
         async function handleItemUpload(e) {
             e.preventDefault();
-            if (!tempProductImageBase64) { alert('⚠️ Please select an image file first!'); return; }
+
+            const fileInput = document.getElementById('p-image-file');
+            const file = fileInput && fileInput.files ? fileInput.files[0] : null;
+
+            if (!file && !tempProductImageBase64) {
+                alert('⚠️ Please select an image file first!');
+                return;
+            }
+
             const title = document.getElementById('p-title').value.trim();
             const category = document.getElementById('p-category').value;
             const price = parseFloat(document.getElementById('p-price').value);
             const discount = parseFloat(document.getElementById('p-discount').value) || 0;
-            const quantity = parseInt(document.getElementById('p-quantity').value, 10) || 0;
-            let image = tempProductImageBase64;
+            const quantity = Math.max(0, parseInt(document.getElementById('p-quantity').value, 10) || 0);
 
-            // Put product images in Supabase Storage so every device/network can load the same image.
-            if (sb && cloudReady) {
-                const fileInput = document.getElementById('p-image-file');
-                const file = fileInput.files[0];
-                if (file) {
-                    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '-');
-                    const path = `products/${Date.now()}-${safeName}`;
-                    const { error } = await sb.storage.from('product-images').upload(path, file, { cacheControl: '3600', upsert: false, contentType: file.type });
-                    if (error) { alert('❌ Image upload failed: ' + error.message); return; }
-                    const { data } = sb.storage.from('product-images').getPublicUrl(path);
-                    image = data.publicUrl;
-                }
+            if (!title || !Number.isFinite(price) || price < 0) {
+                alert('⚠️ Please enter a valid product title and price.');
+                return;
             }
 
-            let products = getProducts();
-            const newProduct = { id: Date.now(), title, category, price, discount, quantity, image };
-            products.unshift(newProduct);
-            localStorage.setItem('tb_prods', JSON.stringify(products));
-            logAuditAction('CREATE', newProduct.id, `Uploaded new product: ${title} (Price: ৳${price}, Stock: ${quantity})`);
-            alert('🎉 Product Uploaded Successfully!');
-            document.getElementById('p-title').value = '';
-            document.getElementById('p-price').value = '';
-            document.getElementById('p-discount').value = '';
-            document.getElementById('p-quantity').value = '0';
-            document.getElementById('p-image-file').value = '';
-            document.getElementById('p-img-preview').style.display = 'none';
-            tempProductImageBase64 = '';
-            renderProducts(products); renderManageProducts(); updateDashboardStats();
+            const productId = Date.now();
+            let imageUrl = tempProductImageBase64 || '';
+
+            try {
+                if (isSharedStorageConfigured() && file) {
+                    imageUrl = await uploadProductImageToSharedStorage(file, productId);
+                }
+
+                const newProduct = {
+                    id: productId,
+                    title,
+                    category,
+                    price,
+                    discount,
+                    quantity,
+                    image: imageUrl
+                };
+
+                let products = getProducts();
+                products.unshift(newProduct);
+                localStorage.setItem('tb_prods', JSON.stringify(products));
+
+                if (isSharedStorageConfigured()) {
+                    await saveProductToSharedStorage(newProduct);
+                }
+
+                logAuditAction('CREATE', newProduct.id, `Uploaded new product: ${title} (Price: ৳${price}, Stock: ${quantity})`);
+
+                alert(isSharedStorageConfigured()
+                    ? '🎉 Product uploaded and shared online successfully!'
+                    : '🎉 Product saved locally. Configure Supabase to share it with other devices.');
+
+                document.getElementById('p-title').value = '';
+                document.getElementById('p-price').value = '';
+                document.getElementById('p-discount').value = '';
+                document.getElementById('p-quantity').value = '0';
+                document.getElementById('p-image-file').value = '';
+                document.getElementById('p-img-preview').style.display = 'none';
+                tempProductImageBase64 = '';
+
+                renderProducts(products);
+                renderManageProducts();
+                updateDashboardStats();
+            } catch (err) {
+                console.error(err);
+                alert('❌ Product could not be uploaded to shared storage. Check your Supabase URL/key, table, bucket and policies.');
+            }
         }
 
         function renderManageProducts() {
@@ -1096,27 +1854,36 @@ For production, replace these permissive anon policies with authenticated admin 
                         <td><img src="${p.image}" style="width:40px; height:40px; object-fit:contain;"></td>
                         <td><strong>${p.title}</strong></td>
                         <td>${p.category}</td>
+                        <td>${p.quantity ?? 0}</td>
                         <td>${priceText}</td>
-                        <td><strong>${p.quantity}</strong></td>
                         <td><button class="btn-delete" onclick="deleteProduct(${p.id})"><i class="fa fa-trash"></i> Delete</button></td>
                     </tr>
                 `;
             });
         }
 
-        function deleteProduct(id) {
+        async function deleteProduct(id) {
             if (confirm("Are you sure you want to delete this product?")) {
                 let products = getProducts();
                 const target = products.find(p => p.id === id);
-                
-                products = products.filter(p => p.id !== id);
-                localStorage.setItem('tb_prods', JSON.stringify(products));
 
-                logAuditAction('DELETE', id, `Deleted product: ${target ? target.title : 'Product'}`);
+                try {
+                    if (isSharedStorageConfigured()) {
+                        await deleteProductFromSharedStorage(id);
+                    }
 
-                renderProducts(products);
-                renderManageProducts();
-                updateDashboardStats();
+                    products = products.filter(p => p.id !== id);
+                    localStorage.setItem('tb_prods', JSON.stringify(products));
+
+                    logAuditAction('DELETE', id, `Deleted product: ${target ? target.title : 'Product'}`);
+
+                    renderProducts(products);
+                    renderManageProducts();
+                    updateDashboardStats();
+                } catch (err) {
+                    console.error(err);
+                    alert('❌ Could not delete the shared product. Please check your Supabase configuration.');
+                }
             }
         }
 
